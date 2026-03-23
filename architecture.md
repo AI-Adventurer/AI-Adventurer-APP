@@ -66,22 +66,9 @@ AI-Adventurer/
 ├── backend/
 │   ├── app/
 │   │   ├── routes/
-│   │   │   ├── health.py
-│   │   │   ├── game.py
-│   │   │   ├── events.py
-│   │   │   └── story.py
 │   │   ├── services/
-│   │   │   ├── game_service.py
-│   │   │   ├── judge_service.py
-│   │   │   ├── event_service.py
-│   │   │   └── story_service.py
 │   │   ├── domain/
-│   │   │   ├── entities/
-│   │   │   ├── rules/
-│   │   │   └── state_machine/
 │   │   ├── integrations/
-│   │   │   ├── llm_client.py
-│   │   │   └── edge_gateway.py
 │   │   ├── middleware/
 │   │   ├── config/
 │   │   └── utils/
@@ -138,11 +125,13 @@ pages/PageName/
 #### Routes
 
 處理：
+
 - request validation
 - response serialization
 - status code
 
 不處理：
+
 - 遊戲規則
 - LLM prompt 組裝細節
 - 狀態機轉移
@@ -150,6 +139,7 @@ pages/PageName/
 #### Services
 
 負責：
+
 - 遊戲流程協調
 - 事件建立與查詢
 - 判定與敘事呼叫
@@ -158,6 +148,7 @@ pages/PageName/
 #### Domain
 
 負責：
+
 - Entity 定義
 - 狀態機
 - 業務規則
@@ -166,6 +157,7 @@ pages/PageName/
 #### Integrations
 
 負責：
+
 - LLM API 呼叫
 - Edge AI 事件接收
 - 其他外部服務抽象
@@ -218,7 +210,7 @@ interface GameState {
   eventId: string | null;
   targetAction: string | null;
   timeRemainingMs: number;
-  judgeResult: 'pending' | 'success' | 'fail';
+  judgeResult: "pending" | "success" | "fail";
   hp: number;
   score: number;
   storySegment: string;
@@ -243,7 +235,7 @@ interface GameEvent {
   eventId: string;
   targetAction: string;
   timeLimitMs: number;
-  status: 'idle' | 'active' | 'success' | 'fail';
+  status: "idle" | "active" | "success" | "fail";
 }
 ```
 
@@ -252,6 +244,7 @@ interface GameEvent {
 ### HTTP API
 
 適合：
+
 - 初始化
 - 查詢狀態
 - 重置遊戲
@@ -260,6 +253,7 @@ interface GameEvent {
 ### WebSocket
 
 適合：
+
 - 推送遊戲狀態
 - 推送 Edge AI 即時事件
 - 推送 debug 資訊
@@ -310,6 +304,7 @@ services:
 ### Debug 頁面建議
 
 顯示：
+
 - 最後一筆 edge payload
 - 當前 event
 - 判定結果
