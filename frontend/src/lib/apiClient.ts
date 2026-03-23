@@ -4,7 +4,6 @@ export interface ApiClientOptions<TBody = unknown> {
   method?: HttpMethod;
   body?: TBody;
   headers?: Record<string, string>;
-  credentials?: RequestCredentials;
   signal?: AbortSignal;
 }
 
@@ -49,22 +48,24 @@ export async function apiClient<TResponse = unknown, TBody = unknown>(
 ): Promise<TResponse> {
   const method = options.method ?? 'GET';
   const isFormData = options.body instanceof FormData;
-  const body =
-    options.body === undefined
-      ? undefined
-      : isFormData
-        ? (options.body as FormData)
-        : JSON.stringify(options.body);
+  const hasBody = options.body !== undefined;
+  const body = !hasBody
+    ? undefined
+    : isFormData
+      ? (options.body as FormData)
+      : JSON.stringify(options.body);
+
+  const headers: Record<string, string> = {
+    ...(options.headers ?? {}),
+  };
+
+  if (hasBody && !isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const response = await fetch(toAbsoluteUrl(path), {
     method,
-    credentials: options.credentials ?? 'include',
-    headers: isFormData
-      ? (options.headers ?? {})
-      : {
-          'Content-Type': 'application/json',
-          ...(options.headers ?? {}),
-        },
+    headers,
     body,
     signal: options.signal,
   });

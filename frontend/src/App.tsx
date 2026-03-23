@@ -1,20 +1,25 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
-import DebugPage from '@/pages/Debug';
-import HomePage from '@/pages/Home';
-import NotFoundPage from '@/pages/NotFound';
-import PlayPage from '@/pages/Play';
-import ResultPage from '@/pages/Result';
+import Home from '@/pages/Home';
+import Game from '@/pages/Game';
+import Calibration from '@/pages/Calibration';
+import HowToPlay from '@/pages/HowToPlay';
+import RootLayout from './components/layout/RootLayout';
 
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/play" element={<PlayPage />} />
-      <Route path="/result" element={<ResultPage />} />
-      <Route path="/debug" element={<DebugPage />} />
-      <Route path="/home" element={<Navigate to="/" replace />} />
-      <Route path="*" element={<NotFoundPage />} />
+      {/* 主要路由 */}
+      <Route element={<RootLayout />}>
+        <Route path="/" element={<Home />} />
+        <Route path="/home" element={<Home />} />
+        <Route path="/game" element={<Game />} />
+        <Route path="/calibration" element={<Calibration />} />
+        <Route path="/how-to-play" element={<HowToPlay />} />
+      </Route>
+
+      {/* 其他路由 */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
