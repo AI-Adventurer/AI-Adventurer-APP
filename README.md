@@ -18,7 +18,7 @@ AI-Adventurer 是一個姿態互動冒險遊戲原型，包含前端互動介面
 ### 2.1 使用 Docker Compose（開發）
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
 啟動後：
