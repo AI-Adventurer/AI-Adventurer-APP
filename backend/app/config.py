@@ -36,7 +36,7 @@ def get_config() -> AppConfig:
     edge_gateway_url = os.getenv("EDGE_GATEWAY_URL", "ws://localhost:9000/events")
     ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_timeout_s = int(os.getenv("OLLAMA_TIMEOUT_S", "120"))
-    llm_model = os.getenv("LLM_MODEL", "qwen3.5:latest")
+    llm_model = os.getenv("LLM_MODEL", "qwen3.5:0.8B")
     cors_origins = _split_csv(os.getenv("CORS_ORIGINS", "*")) or ["*"]
 
     return AppConfig(

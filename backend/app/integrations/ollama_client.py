@@ -96,10 +96,9 @@ class OllamaClient:
 
         cleaned = content.strip()
         if not cleaned:
-            thinking = message.get("thinking") if isinstance(message, dict) else None
-            if isinstance(thinking, str) and thinking.strip():
-                logger.warning("Ollama returned empty content; fallback to thinking output")
-                return thinking.strip(), None
+            # 即使 think:false，qwen3.5 有時仍會返回空 content
+            # 此時使用簡短的預設回應而不是 thinking 內容（thinking 是推理過程，不適合作故事）
+            logger.warning("Ollama returned empty content with think:false; using fallback template")
             return None, {"code": "upstream_empty_response"}
 
         return cleaned, None

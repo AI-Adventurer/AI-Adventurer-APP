@@ -16,6 +16,7 @@ def ingest_event_input():
         return failure("Missing required fields", status_code=422, details={"missing": missing})
 
     event = event_service.ingest_edge_input(payload)
+    event_service.process_game_tick()
     return success(event.to_dict(), status_code=201)
 
 

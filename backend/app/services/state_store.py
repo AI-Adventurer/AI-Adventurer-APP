@@ -1,4 +1,5 @@
 from threading import Lock
+from time import time
 
 from app.models import EdgeInputEvent, EventRecord, GameState, StoryResult
 
@@ -9,6 +10,8 @@ class InMemoryStore:
         self._edge_events: list[EdgeInputEvent] = []
         self._event_history: list[EventRecord] = []
         self._current_event: EventRecord | None = None
+        self._pending_event_spawn = False
+        self._pending_event_spawn_after = 0.0
         self._current_story = StoryResult(
             story_segment="Adventure has not started yet.",
             tone="adventure",
@@ -37,6 +40,26 @@ class InMemoryStore:
         with self._lock:
             return self._current_event
 
+    def schedule_event_spawn(self, delay_s: float = 0.0) -> None:
+        with self._lock:
+            self._pending_event_spawn = True
+            self._pending_event_spawn_after = time() + max(0.0, delay_s)
+
+    def should_spawn_event(self) -> bool:
+        with self._lock:
+            return self._pending_event_spawn and time() >= self._pending_event_spawn_after
+
+    def get_event_spawn_remaining_ms(self) -> int:
+        with self._lock:
+            if not self._pending_event_spawn:
+                return 0
+            return max(0, int((self._pending_event_spawn_after - time()) * 1000))
+
+    def clear_event_spawn(self) -> None:
+        with self._lock:
+            self._pending_event_spawn = False
+            self._pending_event_spawn_after = 0.0
+
     def get_event_history(self) -> list[EventRecord]:
         with self._lock:
             return list(self._event_history)
@@ -59,6 +82,8 @@ class InMemoryStore:
             self._edge_events.clear()
             self._event_history.clear()
             self._current_event = None
+            self._pending_event_spawn = False
+            self._pending_event_spawn_after = 0.0
             self._current_story = StoryResult(
                 story_segment="Adventure has not started yet.",
                 tone="adventure",

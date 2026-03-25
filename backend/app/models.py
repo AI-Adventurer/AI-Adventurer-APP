@@ -26,10 +26,15 @@ class StoryResult:
 @dataclass
 class EventRecord:
     event_id: str
+    chapter: int
+    text: str
     target_action: str
+    success_text: str
+    fail_text: str
     time_limit_ms: int
     status: str
     created_at: float = field(default_factory=time)
+    resolved_at: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
