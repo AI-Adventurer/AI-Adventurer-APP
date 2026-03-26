@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -6,7 +7,23 @@ import BackHomeButton from '@/components/common/BackHomeButton';
 import { useCurrentEvent } from '@/hooks/queries/useCurrentEvent';
 import { useCurrentStory } from '@/hooks/queries/useCurrentStory';
 import { useGameState } from '@/hooks/queries/useGameState';
+import { API_BASE_URL } from '@/lib/apiClient';
 const maxHp = 3;
+const VIDEO_NAMESPACE = '/edge/video';
+const FRONTEND_SOURCE = 'frontend-preview';
+
+function getSocketBaseUrl() {
+  const fromEnv = import.meta.env.VITE_SOCKET_BASE_URL as string | undefined;
+  if (fromEnv && fromEnv.trim().length > 0) {
+    return fromEnv;
+  }
+
+  if (API_BASE_URL && API_BASE_URL.trim().length > 0) {
+    return API_BASE_URL;
+  }
+
+  return window.location.origin;
+}
 
 export default function Game() {
   const gameStateQuery = useGameState();
@@ -19,6 +36,14 @@ export default function Game() {
     null
   );
   const lastBoundarySyncAtRef = useRef(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const [previewStatus, setPreviewStatus] = useState(
+    '等待 Jetson 影像來源連線...'
+  );
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const gameState = gameStateQuery.data?.data;
   const currentEvent = currentEventQuery.data?.data;
@@ -186,6 +211,151 @@ export default function Game() {
     renderedNarrative.key,
   ]);
 
+  useEffect(() => {
+    const socket = io(`${getSocketBaseUrl()}${VIDEO_NAMESPACE}`, {
+      transports: ['websocket', 'polling'],
+      timeout: 10000,
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+    socketRef.current = socket;
+
+    const ensurePeerConnection = () => {
+      if (peerRef.current) {
+        return peerRef.current;
+      }
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      });
+
+      pc.ontrack = (event) => {
+        const [stream] = event.streams;
+        if (!stream || !videoRef.current) {
+          return;
+        }
+        remoteStreamRef.current = stream;
+        videoRef.current.srcObject = stream;
+        setPreviewStatus('已接收 Jetson 影像串流');
+        setPreviewError(null);
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed') {
+          setPreviewError(
+            'WebRTC 連線失敗，請確認 Jetson 端 offer/candidate 是否持續送出。'
+          );
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate) {
+          return;
+        }
+        socket.emit('candidate', {
+          type: 'candidate',
+          source: FRONTEND_SOURCE,
+          candidate: event.candidate.candidate,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+          sdpMid: event.candidate.sdpMid,
+        });
+      };
+
+      peerRef.current = pc;
+      return pc;
+    };
+
+    socket.on('connect', () => {
+      setPreviewStatus('Signaling 已連線，等待 Jetson 發送 Offer...');
+      setPreviewError(null);
+    });
+
+    socket.on('disconnect', () => {
+      setPreviewStatus('Signaling 已中斷，嘗試重新連線中...');
+    });
+
+    socket.on(
+      'response',
+      (payload: { data?: string; message?: string; error?: string }) => {
+        if (payload?.error) {
+          setPreviewError(payload.error);
+        }
+      }
+    );
+
+    socket.on(
+      'offer',
+      async (payload: { source?: string; sdp?: string; type?: string }) => {
+        if (!payload?.sdp || payload.source === FRONTEND_SOURCE) {
+          return;
+        }
+
+        try {
+          const pc = ensurePeerConnection();
+          await pc.setRemoteDescription(
+            new RTCSessionDescription({ type: 'offer', sdp: payload.sdp })
+          );
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          socket.emit('answer', {
+            type: 'answer',
+            source: FRONTEND_SOURCE,
+            target: payload.source,
+            sdp: answer.sdp,
+          });
+          setPreviewStatus('已送出 Answer，等待 Jetson 媒體軌道...');
+        } catch {
+          setPreviewError('處理 Offer 失敗，請確認 Jetson SDP 格式正確。');
+        }
+      }
+    );
+
+    socket.on(
+      'candidate',
+      async (payload: {
+        source?: string;
+        candidate?: string;
+        sdpMLineIndex?: number;
+        sdpMid?: string;
+      }) => {
+        if (!payload?.candidate || payload.source === FRONTEND_SOURCE) {
+          return;
+        }
+
+        try {
+          const pc = ensurePeerConnection();
+          await pc.addIceCandidate(
+            new RTCIceCandidate({
+              candidate: payload.candidate,
+              sdpMLineIndex: payload.sdpMLineIndex,
+              sdpMid: payload.sdpMid,
+            })
+          );
+        } catch {
+          setPreviewError('ICE Candidate 套用失敗，請檢查 candidate 內容。');
+        }
+      }
+    );
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+
+      if (peerRef.current) {
+        peerRef.current.close();
+        peerRef.current = null;
+      }
+
+      if (remoteStreamRef.current) {
+        remoteStreamRef.current.getTracks().forEach((track) => track.stop());
+        remoteStreamRef.current = null;
+      }
+    };
+  }, []);
+
   return (
     <section className="space-y-5 pb-8">
       <BackHomeButton />
@@ -197,7 +367,22 @@ export default function Game() {
           <CardContent className="h-full">
             <div className="relative flex h-[min(74vh,700px)] min-h-[420px] items-center justify-center overflow-hidden rounded-xl border border-dashed border-border/60 bg-[linear-gradient(145deg,hsl(var(--muted)/0.5),hsl(var(--card)))] text-sm text-muted-foreground">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_25%,hsl(var(--primary)/0.2),transparent_38%),radial-gradient(circle_at_78%_80%,hsl(var(--primary)/0.12),transparent_42%)]" />
-              TODO: Camera Stream Preview
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="relative z-10 h-full w-full object-cover"
+              />
+              <div className="pointer-events-none absolute inset-x-4 bottom-4 z-20 rounded-md border border-border/70 bg-background/75 px-3 py-2 text-xs backdrop-blur">
+                <p className="font-medium text-foreground">
+                  Camera Stream Preview
+                </p>
+                <p className="text-muted-foreground">{previewStatus}</p>
+                {previewError ? (
+                  <p className="mt-1 text-destructive">{previewError}</p>
+                ) : null}
+              </div>
             </div>
           </CardContent>
         </Card>

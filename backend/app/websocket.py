@@ -73,8 +73,8 @@ def init_websocket(app):
         """處理 WebRTC Offer"""
         try:
             logger.debug(f"Received WebRTC offer from {data.get('source')}")
-            # 此處可以轉發給前端或其他客戶端
-            # socketio.emit("offer", data, broadcast=True)
+            # 轉發給同 namespace 其他客戶端，作為 signaling broker
+            emit("offer", data, broadcast=True, include_self=False)
             emit("response", {"success": True, "message": "Offer received"})
         except Exception as e:
             logger.error(f"Error handling offer: {e}")
@@ -85,7 +85,7 @@ def init_websocket(app):
         """處理 WebRTC Answer"""
         try:
             logger.debug(f"Received WebRTC answer from {data.get('source')}")
-            # 此處可以轉發給 Jetson 設備
+            emit("answer", data, broadcast=True, include_self=False)
             emit("response", {"success": True, "message": "Answer received"})
         except Exception as e:
             logger.error(f"Error handling answer: {e}")
@@ -96,7 +96,7 @@ def init_websocket(app):
         """處理 ICE Candidate"""
         try:
             logger.debug(f"Received ICE candidate: {data.get('sdpMid')}")
-            # 此處可以轉發 ICE Candidate
+            emit("candidate", data, broadcast=True, include_self=False)
             emit("response", {"success": True, "message": "Candidate received"})
         except Exception as e:
             logger.error(f"Error handling candidate: {e}")
