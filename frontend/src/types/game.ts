@@ -20,29 +20,23 @@ export interface GameStateSnapshot extends GameState {
   server_time: number;
 }
 
-export interface EventInputPayload {
-  timestamp: number;
-  action_scores: Record<string, number>;
-  stable_action?: string;
-}
-
 export interface EventRecord {
   event_id: string;
+  chapter: number;
+  text: string;
   target_action: string;
+  success_text: string;
+  fail_text: string;
   time_limit_ms: number;
   status: string;
   created_at: number;
+  resolved_at: number | null;
 }
 
 export interface StoryResult {
   story_segment: string;
   tone: string;
   template_key: string;
-}
-
-export interface StoryGeneratePayload {
-  event_result?: JudgeResult;
-  template_key?: string;
 }
 
 export interface LlmChatMessage {

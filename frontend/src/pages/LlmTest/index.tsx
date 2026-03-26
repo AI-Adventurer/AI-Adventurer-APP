@@ -28,7 +28,6 @@ export default function LlmTest() {
   const [input, setInput] = useState('');
   const [model, setModel] = useState(modelOptions[0]);
   const [typing, setTyping] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messageIdRef = useRef(0);
   const typingTimerRef = useRef<number | null>(null);
@@ -102,7 +101,6 @@ export default function LlmTest() {
       return;
     }
 
-    setError(null);
     const userMessageId = createMessageId();
     const history: LlmChatMessage[] = [
       ...messages.map((item) => ({ role: item.role, content: item.content })),
@@ -137,8 +135,6 @@ export default function LlmTest() {
       if (err instanceof Error && err.name === 'AbortError') {
         return;
       }
-      const messageText = err instanceof Error ? err.message : 'LLM 回應失敗';
-      setError(messageText);
       setTyping(false);
     }
   };
@@ -167,7 +163,7 @@ export default function LlmTest() {
   };
 
   return (
-    <section className="relative flex h-[calc(100vh-5rem)] min-h-[640px] flex-col overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-b from-background via-background to-muted/20 shadow-sm">
+    <section className="relative flex h-[calc(100vh-5rem)] min-h-[640px] flex-col overflow-hidden rounded-2xl border border-border/70 shadow-sm max-w-screen-md mx-auto">
       <BackHomeButton />
 
       <CardHeader className="flex-row justify-between border-b border-border/70 bg-background/80 px-4 py-3 backdrop-blur sm:px-5">
@@ -235,17 +231,9 @@ export default function LlmTest() {
             </Card>
           </div>
         ) : null}
-
-        {error ? (
-          <Card className="border-destructive/30 bg-destructive/10 shadow-none">
-            <CardContent className="px-4 py-3 text-sm text-destructive">
-              {error}
-            </CardContent>
-          </Card>
-        ) : null}
       </CardContent>
 
-      <div className="border-t border-border/70 bg-background/90 px-4 py-3 backdrop-blur sm:px-5 sm:py-4">
+      <div className="bg-background/90 px-4 py-3 backdrop-blur sm:px-5 sm:py-4">
         <form className="mx-auto max-w-4xl" onSubmit={onSubmit}>
           <Card className="rounded-2xl border-input shadow-sm">
             <CardContent className="p-2">
@@ -267,7 +255,6 @@ export default function LlmTest() {
                     variant="ghost"
                     onClick={() => {
                       setMessages([]);
-                      setError(null);
                     }}
                   >
                     清空

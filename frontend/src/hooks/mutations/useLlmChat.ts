@@ -11,5 +11,6 @@ export function useLlmChat() {
   return useMutation({
     mutationFn: (variables: LlmChatVariables) =>
       postLlmChat(variables.payload, variables.signal),
+    showErrorToast: true,
   });
 }

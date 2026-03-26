@@ -1,35 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import { Bug, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import BackHomeButton from '@/components/common/BackHomeButton';
-import { useInjectDemoEvent } from '@/hooks/mutations/useInjectDemoEvent';
-import { useConfig } from '@/hooks/queries/useConfig';
 import { useCurrentEvent } from '@/hooks/queries/useCurrentEvent';
 import { useCurrentStory } from '@/hooks/queries/useCurrentStory';
 import { useGameState } from '@/hooks/queries/useGameState';
-import { useHealth } from '@/hooks/queries/useHealth';
-import { API_BASE_URL } from '@/lib/apiClient';
-
-const defaultActions = ['stand', 'crouch', 'jump'];
 const maxHp = 3;
 
 export default function Game() {
-  const { showDebug } = useOutletContext<{ showDebug: boolean }>();
-  const healthQuery = useHealth();
-  const configQuery = useConfig();
   const gameStateQuery = useGameState();
   const currentEventQuery = useCurrentEvent();
   const currentStoryQuery = useCurrentStory();
-  const injectDemoEventMutation = useInjectDemoEvent();
-
-  const [selectedAction, setSelectedAction] = useState(defaultActions[0]);
   const [clockMs, setClockMs] = useState(() => Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [phaseSyncArmed, setPhaseSyncArmed] = useState(false);
+  const [zeroLockedPhaseKey, setZeroLockedPhaseKey] = useState<string | null>(
+    null
+  );
   const lastBoundarySyncAtRef = useRef(0);
 
   const gameState = gameStateQuery.data?.data;
@@ -40,9 +28,7 @@ export default function Game() {
     Math.min(maxHp, gameState?.player_state.hp ?? 0)
   );
   const storyText =
-    currentStory?.story_segment?.trim() ||
-    gameState?.story_segment?.trim() ||
-    '等待後端推進劇情...';
+    currentStory?.story_segment?.trim() || '等待後端推進劇情...';
 
   const eventResolved =
     gameState?.judge_result === 'success' || gameState?.judge_result === 'fail';
@@ -58,6 +44,10 @@ export default function Game() {
     0,
     (gameState?.event_end_time ?? 0) * 1000 - calibratedNowMs
   );
+  const narrativeCardTitle = inEventPhase ? '事件' : '劇情';
+  const narrativePhaseKey = `${narrativeCardTitle}-${currentEvent?.event_id ?? 'none'}-${gameState?.judge_result ?? 'pending'}`;
+  const displayRemainingMs =
+    zeroLockedPhaseKey === narrativePhaseKey ? 0 : localRemainingMs;
 
   const phaseTotalMs = isEventActive
     ? (currentEvent?.time_limit_ms ?? 10000)
@@ -69,22 +59,33 @@ export default function Game() {
     0,
     Math.min(
       100,
-      phaseTotalMs > 0 ? (localRemainingMs / phaseTotalMs) * 100 : 0
+      phaseTotalMs > 0 ? (displayRemainingMs / phaseTotalMs) * 100 : 0
     )
   );
-  const narrativeCardTitle = inEventPhase ? '事件' : '劇情';
-  const narrativeText = inEventPhase
-    ? gameState?.story_segment?.trim() || '事件即將開始...'
-    : storyText;
-  const narrativePhaseKey = `${narrativeCardTitle}-${currentEvent?.event_id ?? 'none'}-${gameState?.judge_result ?? 'pending'}`;
+
+  const eventNarrativeText = isEventActive
+    ? currentEvent?.text?.trim() || '事件即將開始...'
+    : eventResolved && gameState?.judge_result === 'success'
+      ? currentEvent?.success_text?.trim() || '你成功化解危機。'
+      : eventResolved && gameState?.judge_result === 'fail'
+        ? currentEvent?.fail_text?.trim() || '你未能及時化解危機。'
+        : '事件即將開始...';
+
+  const narrativeText = inEventPhase ? eventNarrativeText : storyText;
+  const narrativeBadge = isEventActive ? 'Action' : 'Story';
+  const narrativeTargetAction = isEventActive
+    ? (gameState?.target_action ?? '-')
+    : null;
   const [renderedNarrative, setRenderedNarrative] = useState({
     key: narrativePhaseKey,
     title: narrativeCardTitle,
     text: narrativeText,
+    badge: narrativeBadge,
+    targetAction: narrativeTargetAction,
   });
   const [cardAnimClass, setCardAnimClass] = useState('game-card-enter-right');
 
-  const timeLeftSecondsValue = Math.max(0, localRemainingMs / 1000);
+  const timeLeftSecondsValue = Math.max(0, displayRemainingMs / 1000);
   const timeLeftSecondsDisplay = timeLeftSecondsValue.toFixed(1);
   const isEventDangerTime = isEventActive && timeLeftSecondsValue <= 3;
 
@@ -94,34 +95,6 @@ export default function Game() {
       : eventResolved && gameState?.judge_result === 'fail'
         ? 'game-card-fail'
         : '';
-
-  const debugPayload = useMemo(
-    () => ({
-      apiBaseUrl: API_BASE_URL,
-      isBackendReady: healthQuery.data?.data?.status === 'ok',
-      config: configQuery.data?.data,
-      gameState,
-      currentEvent,
-      error:
-        healthQuery.error?.message ??
-        configQuery.error?.message ??
-        gameStateQuery.error?.message ??
-        currentEventQuery.error?.message ??
-        currentStoryQuery.error?.message,
-    }),
-    [
-      configQuery.data?.data,
-      configQuery.error?.message,
-      currentEvent,
-      currentEventQuery.error?.message,
-      currentStory,
-      currentStoryQuery.error?.message,
-      gameState,
-      gameStateQuery.error?.message,
-      healthQuery.data?.data?.status,
-      healthQuery.error?.message,
-    ]
-  );
 
   // 本地時鐘：用 server_time 校正後自行更新剩餘時間。
   useEffect(() => {
@@ -137,6 +110,19 @@ export default function Game() {
     }
     setServerOffsetMs(gameState.server_time * 1000 - Date.now());
   }, [gameState?.server_time]);
+
+  // 同一個 phase 一旦歸零，鎖定為 0，避免切換延遲造成倒數回彈。
+  useEffect(() => {
+    if (zeroLockedPhaseKey && zeroLockedPhaseKey !== narrativePhaseKey) {
+      setZeroLockedPhaseKey(null);
+    }
+  }, [narrativePhaseKey, zeroLockedPhaseKey]);
+
+  useEffect(() => {
+    if (localRemainingMs <= 0 && zeroLockedPhaseKey !== narrativePhaseKey) {
+      setZeroLockedPhaseKey(narrativePhaseKey);
+    }
+  }, [localRemainingMs, narrativePhaseKey, zeroLockedPhaseKey]);
 
   // 到點後改為節流重試同步，避免卡在 0 秒卻沒切到下一輪。
   useEffect(() => {
@@ -175,11 +161,6 @@ export default function Game() {
 
   useEffect(() => {
     if (narrativePhaseKey === renderedNarrative.key) {
-      setRenderedNarrative((prev) => ({
-        ...prev,
-        title: narrativeCardTitle,
-        text: narrativeText,
-      }));
       return;
     }
 
@@ -189,6 +170,8 @@ export default function Game() {
         key: narrativePhaseKey,
         title: narrativeCardTitle,
         text: narrativeText,
+        badge: narrativeBadge,
+        targetAction: narrativeTargetAction,
       });
       setCardAnimClass('game-card-enter-right');
     }, 210);
@@ -198,6 +181,8 @@ export default function Game() {
     narrativePhaseKey,
     narrativeCardTitle,
     narrativeText,
+    narrativeBadge,
+    narrativeTargetAction,
     renderedNarrative.key,
   ]);
 
@@ -268,7 +253,7 @@ export default function Game() {
               <CardTitle className="flex items-center justify-between">
                 <span>{renderedNarrative.title}卡</span>
                 <span className="rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
-                  {isEventActive ? 'Action' : 'Story'}
+                  {renderedNarrative.badge}
                 </span>
               </CardTitle>
             </CardHeader>
@@ -277,11 +262,11 @@ export default function Game() {
                 {renderedNarrative.text}
               </p>
 
-              {isEventActive ? (
+              {renderedNarrative.targetAction ? (
                 <div className="rounded-lg border border-border/60 bg-background/70 p-3">
                   <p className="text-xs text-muted-foreground">目標動作</p>
                   <p className="mt-1 text-lg font-semibold text-primary">
-                    {gameState?.target_action ?? '-'}
+                    {renderedNarrative.targetAction}
                   </p>
                 </div>
               ) : null}
@@ -289,58 +274,6 @@ export default function Game() {
           </Card>
         </div>
       </div>
-
-      {showDebug ? (
-        <div className="fixed bottom-4 right-4 z-50 w-[min(92vw,26rem)] rounded-2xl border border-border/80 bg-background/95 p-3 shadow-xl backdrop-blur">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="inline-flex items-center gap-2 text-sm font-semibold">
-              <Bug className="size-4 text-amber-500" />
-              Debug Panel
-            </h3>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                void gameStateQuery.refetch();
-                void currentEventQuery.refetch();
-                void currentStoryQuery.refetch();
-              }}
-            >
-              <RefreshCw className="size-4" />
-              Sync
-            </Button>
-          </div>
-
-          <div className="mb-3 flex items-center gap-2">
-            <select
-              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              value={selectedAction}
-              onChange={(event) => setSelectedAction(event.target.value)}
-            >
-              {defaultActions.map((action) => (
-                <option key={action} value={action}>
-                  {action}
-                </option>
-              ))}
-            </select>
-
-            <Button
-              size="sm"
-              onClick={() =>
-                injectDemoEventMutation.mutate({
-                  target_action: selectedAction,
-                })
-              }
-            >
-              Inject
-            </Button>
-          </div>
-
-          <pre className="max-h-56 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-2 text-[11px] leading-relaxed">
-            {JSON.stringify(debugPayload, null, 2)}
-          </pre>
-        </div>
-      ) : null}
     </section>
   );
 }
