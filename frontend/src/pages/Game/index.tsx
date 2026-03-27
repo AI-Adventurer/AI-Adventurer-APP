@@ -202,6 +202,8 @@ export default function Game() {
   const bootstrapPoseRef = useRef<(source?: string | null) => void>(() => {});
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const pendingRemoteCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const remoteDescriptionAppliedRef = useRef(false);
   const skeletonCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const latestPoseRef = useRef<PosePoint[] | null>(null);
   const overlayFrameRef = useRef<number | null>(null);
@@ -620,6 +622,54 @@ export default function Game() {
     });
     socketRef.current = socket;
 
+    const clearRemoteStream = (stopTracks: boolean) => {
+      const stream = remoteStreamRef.current;
+      if (!stream) {
+        if (videoRef.current?.srcObject) {
+          videoRef.current.srcObject = null;
+        }
+        return;
+      }
+      if (videoRef.current?.srcObject === stream) {
+        videoRef.current.srcObject = null;
+      }
+      if (stopTracks) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      remoteStreamRef.current = null;
+    };
+
+    const resetPeerConnection = (options?: { clearStream?: boolean }) => {
+      pendingRemoteCandidatesRef.current = [];
+      remoteDescriptionAppliedRef.current = false;
+      const pc = peerRef.current;
+      peerRef.current = null;
+      if (pc) {
+        pc.ontrack = null;
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.onicecandidate = null;
+        pc.close();
+      }
+      if (options?.clearStream) {
+        clearRemoteStream(true);
+      }
+    };
+
+    const flushPendingCandidates = async (pc: RTCPeerConnection) => {
+      if (!remoteDescriptionAppliedRef.current) {
+        return;
+      }
+      const pending = pendingRemoteCandidatesRef.current;
+      if (!pending.length) {
+        return;
+      }
+      pendingRemoteCandidatesRef.current = [];
+      for (const candidate of pending) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    };
+
     const ensurePeerConnection = () => {
       if (peerRef.current) {
         return peerRef.current;
@@ -641,10 +691,29 @@ export default function Game() {
       };
 
       pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          setPreviewStatus('已接收 Jetson 影像串流');
+          setPreviewError(null);
+          return;
+        }
         if (pc.connectionState === 'failed') {
           setPreviewError(
             'WebRTC 連線失敗，請確認 Jetson 端 offer/candidate 是否持續送出。'
           );
+          setPreviewStatus('WebRTC 連線失敗，等待 Jetson 重新協商...');
+          resetPeerConnection({ clearStream: true });
+        } else if (pc.connectionState === 'disconnected') {
+          setPreviewStatus('影像串流暫時中斷，等待 Jetson 重新連線...');
+        } else if (pc.connectionState === 'closed') {
+          setPreviewStatus('影像串流已關閉，等待 Jetson 重新協商...');
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === 'failed') {
+          setPreviewStatus('ICE 連線失敗，等待 Jetson 重新協商...');
+          setPreviewError('ICE 連線失敗，請確認 Jetson 與前端網路可互通。');
+          resetPeerConnection({ clearStream: true });
         }
       };
 
@@ -668,6 +737,9 @@ export default function Game() {
     socket.on('connect', () => {
       setPreviewStatus('Signaling 已連線，等待 Jetson 發送 Offer...');
       setPreviewError(null);
+      socket.emit('request_offer', {
+        source: FRONTEND_SOURCE,
+      });
     });
 
     socket.on('disconnect', () => {
@@ -700,10 +772,13 @@ export default function Game() {
               bootstrapPoseRef.current(source);
             }
           }
+          resetPeerConnection({ clearStream: true });
           const pc = ensurePeerConnection();
           await pc.setRemoteDescription(
             new RTCSessionDescription({ type: 'offer', sdp: payload.sdp })
           );
+          remoteDescriptionAppliedRef.current = true;
+          await flushPendingCandidates(pc);
 
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -734,14 +809,17 @@ export default function Game() {
         }
 
         try {
+          const candidateInit = {
+            candidate: payload.candidate,
+            sdpMLineIndex: payload.sdpMLineIndex,
+            sdpMid: payload.sdpMid,
+          };
+          if (!remoteDescriptionAppliedRef.current || !peerRef.current) {
+            pendingRemoteCandidatesRef.current.push(candidateInit);
+            return;
+          }
           const pc = ensurePeerConnection();
-          await pc.addIceCandidate(
-            new RTCIceCandidate({
-              candidate: payload.candidate,
-              sdpMLineIndex: payload.sdpMLineIndex,
-              sdpMid: payload.sdpMid,
-            })
-          );
+          await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
         } catch {
           setPreviewError('ICE Candidate 套用失敗，請檢查 candidate 內容。');
         }
@@ -751,16 +829,7 @@ export default function Game() {
     return () => {
       socket.disconnect();
       socketRef.current = null;
-
-      if (peerRef.current) {
-        peerRef.current.close();
-        peerRef.current = null;
-      }
-
-      if (remoteStreamRef.current) {
-        remoteStreamRef.current.getTracks().forEach((track) => track.stop());
-        remoteStreamRef.current = null;
-      }
+      resetPeerConnection({ clearStream: true });
     };
   }, []);
 

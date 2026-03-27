@@ -128,4 +128,14 @@ def init_websocket(app):
             logger.error(f"Error handling candidate: {e}")
             emit("response", {"success": False, "error": str(e)})
 
+    @socketio.on("request_offer", namespace="/edge/video")
+    def handle_request_offer(data):
+        """要求 Jetson 重新送出 Offer"""
+        try:
+            logger.debug("Received request_offer from %s", data.get("source"))
+            emit("request_offer", data, broadcast=True, include_self=False)
+        except Exception as e:
+            logger.error(f"Error handling request_offer: {e}")
+            emit("response", {"success": False, "error": str(e)})
+
     return socketio
