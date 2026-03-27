@@ -46,6 +46,115 @@ function isPosePointArray(value: unknown): value is PosePoint[] {
   );
 }
 
+function isValidPosePoint(point?: PosePoint) {
+  if (!point || point.length !== 3) {
+    return false;
+  }
+
+  const [x, y, z] = point;
+  // 全 0 點視為沒抓到，前端繪製時忽略。
+  return !(x === 0 && y === 0 && z === 0);
+}
+
+function syncCanvasSize(canvas: HTMLCanvasElement) {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  return { width, height };
+}
+
+function getVideoDrawRect(
+  video: HTMLVideoElement | null,
+  width: number,
+  height: number
+) {
+  if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    return { x: 0, y: 0, w: width, h: height };
+  }
+
+  const videoAspect = video.videoWidth / video.videoHeight;
+  const canvasAspect = width / height;
+
+  if (videoAspect > canvasAspect) {
+    const w = width;
+    const h = width / videoAspect;
+    return { x: 0, y: (height - h) / 2, w, h };
+  }
+
+  const h = height;
+  const w = height * videoAspect;
+  return { x: (width - w) / 2, y: 0, w, h };
+}
+
+function drawPoseOverlay(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  video: HTMLVideoElement | null,
+  pose: PosePoint[] | null
+) {
+  const size = syncCanvasSize(canvas);
+  if (!size) {
+    return;
+  }
+
+  const { width, height } = size;
+  ctx.clearRect(0, 0, width, height);
+
+  if (!pose || pose.length !== 33) {
+    return;
+  }
+
+  // 將骨架映射到影片實際可見區域（object-contain 會有 letterbox）。
+  const videoRect = getVideoDrawRect(video, width, height);
+
+  ctx.strokeStyle = 'rgba(34, 197, 94, 0.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (const [a, b] of POSE_CONNECTIONS) {
+    const pa = pose[a];
+    const pb = pose[b];
+    if (!isValidPosePoint(pa) || !isValidPosePoint(pb)) {
+      continue;
+    }
+
+    ctx.moveTo(
+      videoRect.x + pa[0] * videoRect.w,
+      videoRect.y + pa[1] * videoRect.h
+    );
+    ctx.lineTo(
+      videoRect.x + pb[0] * videoRect.w,
+      videoRect.y + pb[1] * videoRect.h
+    );
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(34, 197, 94, 0.95)';
+  for (const point of pose) {
+    if (!isValidPosePoint(point)) {
+      continue;
+    }
+
+    ctx.beginPath();
+    ctx.arc(
+      videoRect.x + point[0] * videoRect.w,
+      videoRect.y + point[1] * videoRect.h,
+      3,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+  }
+}
+
 function normalizeBaseUrl(value: string | undefined | null) {
   const trimmed = value?.trim() ?? '';
   if (!trimmed) {
@@ -94,8 +203,9 @@ export default function Game() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const skeletonCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [latestPose, setLatestPose] = useState<PosePoint[] | null>(null);
-  const [overlayRevision, setOverlayRevision] = useState(0);
+  const latestPoseRef = useRef<PosePoint[] | null>(null);
+  const overlayFrameRef = useRef<number | null>(null);
+  const scheduleOverlayDrawRef = useRef<() => void>(() => {});
   const [previewStatus, setPreviewStatus] = useState(
     '等待 Jetson 影像來源連線...'
   );
@@ -200,9 +310,10 @@ export default function Game() {
         return false;
       }
       poseSourceRef.current = source;
-      setLatestPose(pose);
+      latestPoseRef.current = pose;
       setPoseStatus(`已接收骨架資料 (${source})`);
       setPoseError(null);
+      scheduleOverlayDrawRef.current();
       return true;
     };
 
@@ -343,9 +454,7 @@ export default function Game() {
         ) {
           return;
         }
-        if (applyPose(source, payload?.latest_pose)) {
-          setOverlayRevision((value) => value + 1);
-        }
+        applyPose(source, payload?.latest_pose);
       }
     );
 
@@ -366,9 +475,24 @@ export default function Game() {
       return;
     }
 
-    const scheduleOverlayRefresh = () => {
-      setOverlayRevision((value) => value + 1);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    const drawOverlayFrame = () => {
+      overlayFrameRef.current = null;
+      drawPoseOverlay(ctx, canvas, videoRef.current ?? video, latestPoseRef.current);
     };
+
+    const scheduleOverlayRefresh = () => {
+      if (overlayFrameRef.current !== null) {
+        return;
+      }
+      overlayFrameRef.current = window.requestAnimationFrame(drawOverlayFrame);
+    };
+
+    scheduleOverlayDrawRef.current = scheduleOverlayRefresh;
 
     const resizeObserver =
       typeof ResizeObserver === 'undefined'
@@ -386,8 +510,14 @@ export default function Game() {
       video.addEventListener('resize', scheduleOverlayRefresh);
     }
     window.addEventListener('resize', scheduleOverlayRefresh);
+    scheduleOverlayRefresh();
 
     return () => {
+      if (overlayFrameRef.current !== null) {
+        window.cancelAnimationFrame(overlayFrameRef.current);
+        overlayFrameRef.current = null;
+      }
+      scheduleOverlayDrawRef.current = () => {};
       resizeObserver?.disconnect();
       if (video) {
         video.removeEventListener('loadedmetadata', scheduleOverlayRefresh);
@@ -396,107 +526,6 @@ export default function Game() {
       window.removeEventListener('resize', scheduleOverlayRefresh);
     };
   }, []);
-
-  useEffect(() => {
-    const canvas = skeletonCanvasRef.current;
-    const video = videoRef.current;
-    if (!canvas) {
-      return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return;
-    }
-
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    if (width <= 0 || height <= 0) {
-      return;
-    }
-
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-    }
-
-    ctx.clearRect(0, 0, width, height);
-
-    // 將骨架映射到影片實際可見區域（object-contain 會有 letterbox）。
-    const getVideoDrawRect = () => {
-      if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
-        return { x: 0, y: 0, w: width, h: height };
-      }
-
-      const videoAspect = video.videoWidth / video.videoHeight;
-      const canvasAspect = width / height;
-
-      if (videoAspect > canvasAspect) {
-        const w = width;
-        const h = width / videoAspect;
-        return { x: 0, y: (height - h) / 2, w, h };
-      }
-
-      const h = height;
-      const w = height * videoAspect;
-      return { x: (width - w) / 2, y: 0, w, h };
-    };
-
-    const videoRect = getVideoDrawRect();
-
-    if (!latestPose || latestPose.length !== 33) {
-      return;
-    }
-
-    const validPoint = (point?: PosePoint) => {
-      if (!point || point.length !== 3) {
-        return false;
-      }
-      const [x, y, z] = point;
-      // 全 0 點視為沒抓到，前端繪製時忽略。
-      if (x === 0 && y === 0 && z === 0) {
-        return false;
-      }
-      return true;
-    };
-
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.9)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (const [a, b] of POSE_CONNECTIONS) {
-      const pa = latestPose[a];
-      const pb = latestPose[b];
-      if (!validPoint(pa) || !validPoint(pb)) {
-        continue;
-      }
-
-      ctx.moveTo(
-        videoRect.x + pa[0] * videoRect.w,
-        videoRect.y + pa[1] * videoRect.h
-      );
-      ctx.lineTo(
-        videoRect.x + pb[0] * videoRect.w,
-        videoRect.y + pb[1] * videoRect.h
-      );
-    }
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(34, 197, 94, 0.95)';
-    for (const point of latestPose) {
-      if (!validPoint(point)) {
-        continue;
-      }
-      ctx.beginPath();
-      ctx.arc(
-        videoRect.x + point[0] * videoRect.w,
-        videoRect.y + point[1] * videoRect.h,
-        3,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-    }
-  }, [latestPose, overlayRevision]);
 
   useEffect(() => {
     if (!gameState) {

@@ -41,40 +41,44 @@ def init_websocket(app):
         """接收 Jetson 幀數據"""
         try:
             result = edge_service.ingest_frame(data)
-            emit("response", result)
-
-            if result.get("success"):
-                source = str(data.get("source", "")).strip()
-                latest_frame = edge_service.get_latest_frame(source) if source else None
-                if latest_frame is not None:
-                    latest_pose = (
-                        latest_frame.pose.points
-                        if latest_frame.pose
-                        else latest_frame.skeleton_sequence.frames[-1]
-                        if latest_frame.skeleton_sequence.frames
-                        else []
-                    )
-                    emit(
-                        "frame_broadcast",
-                        {
-                            "source": latest_frame.source,
-                            "frame_id": latest_frame.frame_id,
-                            "timestamp": latest_frame.timestamp,
-                            "stable_action": latest_frame.stable_action,
-                            "confidence": latest_frame.confidence,
-                            "latest_pose": latest_pose,
-                        },
-                        namespace="/edge/frames",
-                        broadcast=True,
-                        include_self=False,
-                    )
-                else:
-                    logger.warning(
-                        "Frame ingest succeeded but latest frame lookup missed source=%r",
-                        source,
-                    )
-            else:
+            if not result.get("success"):
+                emit("response", result)
                 logger.warning("Rejected edge frame payload: %s", result)
+                return
+
+            pose_data = data.get("pose") if isinstance(data, dict) else None
+            pose_points = (
+                pose_data.get("points")
+                if isinstance(pose_data, dict)
+                else None
+            )
+            if not isinstance(pose_points, list) or len(pose_points) != 33:
+                skeleton_data = data.get("skeleton_sequence", {}) if isinstance(data, dict) else {}
+                skeleton_frames = (
+                    skeleton_data.get("frames")
+                    if isinstance(skeleton_data, dict)
+                    else None
+                )
+                pose_points = (
+                    skeleton_frames[-1]
+                    if isinstance(skeleton_frames, list) and skeleton_frames
+                    else []
+                )
+
+            emit(
+                "frame_broadcast",
+                {
+                    "source": str(data.get("source", "")).strip(),
+                    "frame_id": int(data.get("frame_id", 0)),
+                    "timestamp": float(data.get("timestamp", 0.0)),
+                    "stable_action": str(data.get("stable_action", "")),
+                    "confidence": float(data.get("confidence", 0.0)),
+                    "latest_pose": pose_points,
+                },
+                namespace="/edge/frames",
+                broadcast=True,
+                include_self=False,
+            )
             
         except Exception as e:
             logger.error(f"Error handling frame: {e}")
