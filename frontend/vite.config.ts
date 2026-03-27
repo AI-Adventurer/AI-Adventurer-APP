@@ -15,6 +15,15 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      '/edge': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/socket.io': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        ws: true,
+      },
     },
     watch: isDockerDev
       ? {
