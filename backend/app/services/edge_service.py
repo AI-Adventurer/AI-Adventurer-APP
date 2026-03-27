@@ -63,6 +63,14 @@ class EdgeService:
                     "error": f"Missing fields: {', '.join(missing_fields)}",
                 }
 
+            source = str(payload.get("source", "")).strip()
+            if not source:
+                return {
+                    "success": False,
+                    "message": "Invalid source",
+                    "error": "source must be a non-empty string",
+                }
+
             # 驗證 action_scores
             action_scores = payload.get("action_scores", {})
             if not isinstance(action_scores, dict):
@@ -158,7 +166,7 @@ class EdgeService:
             # 構建 JetsonFrame
             frame = JetsonFrame(
                 timestamp=float(payload["timestamp"]),
-                source=str(payload["source"]),
+                source=source,
                 frame_id=int(payload["frame_id"]),
                 action_scores=action_scores,
                 stable_action=str(payload["stable_action"]),

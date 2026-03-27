@@ -9,6 +9,7 @@ import { useCurrentStory } from '@/hooks/queries/useCurrentStory';
 import { useGameState } from '@/hooks/queries/useGameState';
 import { API_BASE_URL } from '@/lib/apiClient';
 const maxHp = 3;
+const FRAME_NAMESPACE = '/edge/frames';
 const VIDEO_NAMESPACE = '/edge/video';
 const FRONTEND_SOURCE = 'frontend-preview';
 const POSE_CONNECTIONS: Array<[number, number]> = [
@@ -32,14 +33,42 @@ const POSE_CONNECTIONS: Array<[number, number]> = [
 
 type PosePoint = [number, number, number];
 
-function getSocketBaseUrl() {
-  const fromEnv = import.meta.env.VITE_SOCKET_BASE_URL as string | undefined;
-  if (fromEnv && fromEnv.trim().length > 0) {
-    return fromEnv;
+function isPosePointArray(value: unknown): value is PosePoint[] {
+  return (
+    Array.isArray(value) &&
+    value.length === 33 &&
+    value.every(
+      (point) =>
+        Array.isArray(point) &&
+        point.length === 3 &&
+        point.every((coord) => typeof coord === 'number')
+    )
+  );
+}
+
+function normalizeBaseUrl(value: string | undefined | null) {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+}
+
+function stripApiSuffix(value: string) {
+  return value.replace(/\/api\/?$/, '');
+}
+
+function getEdgeBaseUrl() {
+  const fromSocketEnv = normalizeBaseUrl(
+    import.meta.env.VITE_SOCKET_BASE_URL as string | undefined
+  );
+  if (fromSocketEnv) {
+    return stripApiSuffix(fromSocketEnv);
   }
 
-  if (API_BASE_URL && API_BASE_URL.trim().length > 0) {
-    return API_BASE_URL;
+  const fromApiBase = normalizeBaseUrl(API_BASE_URL);
+  if (fromApiBase) {
+    return stripApiSuffix(fromApiBase);
   }
 
   return window.location.origin;
@@ -58,14 +87,21 @@ export default function Game() {
   const lastBoundarySyncAtRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const frameSocketRef = useRef<Socket | null>(null);
+  const poseSourceRef = useRef<string | null>(null);
+  const activeVideoSourceRef = useRef<string | null>(null);
+  const bootstrapPoseRef = useRef<(source?: string | null) => void>(() => {});
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const skeletonCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [latestPose, setLatestPose] = useState<PosePoint[] | null>(null);
+  const [overlayRevision, setOverlayRevision] = useState(0);
   const [previewStatus, setPreviewStatus] = useState(
     '等待 Jetson 影像來源連線...'
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [poseStatus, setPoseStatus] = useState('等待骨架資料連線...');
+  const [poseError, setPoseError] = useState<string | null>(null);
 
   const gameState = gameStateQuery.data?.data;
   const currentEvent = currentEventQuery.data?.data;
@@ -153,42 +189,189 @@ export default function Game() {
 
   useEffect(() => {
     let aborted = false;
+    const edgeBaseUrl = getEdgeBaseUrl();
 
-    const pullLatestPose = async () => {
+    const applyPose = (sourceCandidate: string | null | undefined, pose: unknown) => {
+      const source = sourceCandidate?.trim();
+      if (!source || !isPosePointArray(pose) || aborted) {
+        return false;
+      }
+      poseSourceRef.current = source;
+      setLatestPose(pose);
+      setPoseStatus(`已接收骨架資料 (${source})`);
+      setPoseError(null);
+      return true;
+    };
+
+    const bootstrapLatestPose = async (preferredSource?: string | null) => {
       try {
-        const response = await fetch(`${API_BASE_URL}/edge/frames/latest`);
+        const source = preferredSource?.trim();
+        const endpoint = source
+          ? `${edgeBaseUrl}/edge/frames/latest/${encodeURIComponent(source)}`
+          : `${edgeBaseUrl}/edge/frames/latest`;
+        const response = await fetch(endpoint);
         if (!response.ok) {
+          if (!aborted) {
+            setPoseStatus('骨架資料尚未就緒，等待 Jetson 傳送...');
+          }
           return;
         }
+        if (source) {
+          const payload = (await response.json()) as {
+            data?: {
+              frame?: {
+                latest_pose?: number[][];
+                source?: string;
+              };
+            };
+          };
+          const frame = payload?.data?.frame;
+          const synced = applyPose(frame?.source ?? source, frame?.latest_pose);
+          if (!synced && !aborted) {
+            setPoseStatus(`已鎖定來源 ${source}，等待骨架資料...`);
+          }
+          return;
+        }
+
         const payload = (await response.json()) as {
           data?: {
-            frames?: Record<string, { latest_pose?: number[][] }>;
+            frames?: Record<
+              string,
+              {
+                latest_pose?: number[][];
+                source?: string;
+              }
+            >;
           };
         };
 
         const frames = payload?.data?.frames;
         if (!frames) {
+          if (!aborted) {
+            setPoseStatus('骨架資料尚未就緒，等待 Jetson 傳送...');
+          }
           return;
         }
 
-        const firstFrame = Object.values(frames)[0];
-        const pose = firstFrame?.latest_pose;
-        if (!aborted && Array.isArray(pose)) {
-          setLatestPose(pose as PosePoint[]);
+        const activeSource = activeVideoSourceRef.current?.trim();
+        if (activeSource) {
+          const activeFrame = frames[activeSource];
+          if (applyPose(activeFrame?.source ?? activeSource, activeFrame?.latest_pose)) {
+            return;
+          }
+        }
+
+        const [firstSource, firstFrame] = Object.entries(frames)[0] ?? [];
+        if (!applyPose(firstFrame?.source ?? firstSource, firstFrame?.latest_pose) && !aborted) {
+          setPoseStatus('已連線，等待有效骨架資料...');
         }
       } catch {
-        // 靜默處理輪詢錯誤，避免打斷遊戲流程。
+        if (!aborted) {
+          setPoseError('骨架資料初始化失敗，將等待即時 frame_broadcast。');
+          setPoseStatus('骨架資料重試中...');
+        }
       }
     };
+    bootstrapPoseRef.current = (source?: string | null) => {
+      void bootstrapLatestPose(source);
+    };
 
-    void pullLatestPose();
-    const timer = window.setInterval(() => {
-      void pullLatestPose();
-    }, 350);
+    const frameSocket = io(`${edgeBaseUrl}${FRAME_NAMESPACE}`, {
+      transports: ['websocket', 'polling'],
+      timeout: 10000,
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+    frameSocketRef.current = frameSocket;
+
+    frameSocket.on('connect', () => {
+      if (aborted) {
+        return;
+      }
+      setPoseStatus('骨架即時通道已連線');
+      setPoseError(null);
+      void bootstrapLatestPose(activeVideoSourceRef.current ?? poseSourceRef.current);
+    });
+
+    frameSocket.on('disconnect', () => {
+      if (!aborted) {
+        setPoseStatus('骨架即時通道中斷，嘗試重新連線中...');
+      }
+    });
+
+    frameSocket.on('connect_error', () => {
+      if (!aborted) {
+        setPoseError('骨架即時通道連線失敗，請檢查 /socket.io 與 /edge 代理設定。');
+        setPoseStatus('骨架即時通道連線失敗');
+      }
+    });
+
+    frameSocket.on(
+      'frame_broadcast',
+      (payload: { source?: string; latest_pose?: unknown }) => {
+        const source = payload?.source?.trim();
+        if (!source) {
+          return;
+        }
+        const activeSource = activeVideoSourceRef.current?.trim();
+        if (activeSource && activeSource !== source) {
+          return;
+        }
+        if (poseSourceRef.current && poseSourceRef.current !== source && !activeSource) {
+          return;
+        }
+        if (applyPose(source, payload?.latest_pose)) {
+          setOverlayRevision((value) => value + 1);
+        }
+      }
+    );
+
+    void bootstrapLatestPose();
 
     return () => {
       aborted = true;
-      window.clearInterval(timer);
+      bootstrapPoseRef.current = () => {};
+      frameSocket.disconnect();
+      frameSocketRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = skeletonCanvasRef.current;
+    const video = videoRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const scheduleOverlayRefresh = () => {
+      setOverlayRevision((value) => value + 1);
+    };
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            scheduleOverlayRefresh();
+          });
+
+    resizeObserver?.observe(canvas);
+    if (canvas.parentElement) {
+      resizeObserver?.observe(canvas.parentElement);
+    }
+    if (video) {
+      video.addEventListener('loadedmetadata', scheduleOverlayRefresh);
+      video.addEventListener('resize', scheduleOverlayRefresh);
+    }
+    window.addEventListener('resize', scheduleOverlayRefresh);
+
+    return () => {
+      resizeObserver?.disconnect();
+      if (video) {
+        video.removeEventListener('loadedmetadata', scheduleOverlayRefresh);
+        video.removeEventListener('resize', scheduleOverlayRefresh);
+      }
+      window.removeEventListener('resize', scheduleOverlayRefresh);
     };
   }, []);
 
@@ -291,7 +474,7 @@ export default function Game() {
       );
       ctx.fill();
     }
-  }, [latestPose]);
+  }, [latestPose, overlayRevision]);
 
   useEffect(() => {
     if (!gameState) {
@@ -376,7 +559,8 @@ export default function Game() {
   ]);
 
   useEffect(() => {
-    const socket = io(`${getSocketBaseUrl()}${VIDEO_NAMESPACE}`, {
+    const edgeBaseUrl = getEdgeBaseUrl();
+    const socket = io(`${edgeBaseUrl}${VIDEO_NAMESPACE}`, {
       transports: ['websocket', 'polling'],
       timeout: 10000,
       reconnection: true,
@@ -451,11 +635,20 @@ export default function Game() {
     socket.on(
       'offer',
       async (payload: { source?: string; sdp?: string; type?: string }) => {
-        if (!payload?.sdp || payload.source === FRONTEND_SOURCE) {
+        const source = payload?.source?.trim();
+        if (!payload?.sdp || source === FRONTEND_SOURCE) {
           return;
         }
 
         try {
+          if (source) {
+            activeVideoSourceRef.current = source;
+            if (poseSourceRef.current !== source) {
+              poseSourceRef.current = source;
+              setPoseStatus(`已鎖定骨架來源 (${source})`);
+              bootstrapPoseRef.current(source);
+            }
+          }
           const pc = ensurePeerConnection();
           await pc.setRemoteDescription(
             new RTCSessionDescription({ type: 'offer', sdp: payload.sdp })
@@ -547,8 +740,12 @@ export default function Game() {
                   Camera Stream Preview
                 </p>
                 <p className="text-muted-foreground">{previewStatus}</p>
+                <p className="text-muted-foreground">{poseStatus}</p>
                 {previewError ? (
                   <p className="mt-1 text-destructive">{previewError}</p>
+                ) : null}
+                {poseError ? (
+                  <p className="mt-1 text-destructive">{poseError}</p>
                 ) : null}
               </div>
             </div>
