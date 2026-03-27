@@ -43,9 +43,6 @@ def init_websocket(app):
             result = edge_service.ingest_frame(data)
             emit("response", result)
 
-            # 廣播給所有連線客戶端 (可選)
-            # socketio.emit("frame_broadcast", data, broadcast=True)
-
             if result.get("success"):
                 source = str(data.get("source", "")).strip()
                 latest_frame = edge_service.get_latest_frame(source) if source else None
@@ -57,7 +54,7 @@ def init_websocket(app):
                         if latest_frame.skeleton_sequence.frames
                         else []
                     )
-                    socketio.emit(
+                    emit(
                         "frame_broadcast",
                         {
                             "source": latest_frame.source,
@@ -71,7 +68,14 @@ def init_websocket(app):
                         broadcast=True,
                         include_self=False,
                     )
-
+                else:
+                    logger.warning(
+                        "Frame ingest succeeded but latest frame lookup missed source=%r",
+                        source,
+                    )
+            else:
+                logger.warning("Rejected edge frame payload: %s", result)
+            
         except Exception as e:
             logger.error(f"Error handling frame: {e}")
 
