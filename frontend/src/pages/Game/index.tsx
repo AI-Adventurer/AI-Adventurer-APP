@@ -9,6 +9,7 @@ import { useCurrentStory } from '@/hooks/queries/useCurrentStory';
 import { useGameState } from '@/hooks/queries/useGameState';
 import { API_BASE_URL } from '@/lib/apiClient';
 const maxHp = 3;
+const FRAME_NAMESPACE = '/edge/frames';
 const VIDEO_NAMESPACE = '/edge/video';
 const FRONTEND_SOURCE = 'frontend-preview';
 const POSE_CONNECTIONS: Array<[number, number]> = [
@@ -31,6 +32,19 @@ const POSE_CONNECTIONS: Array<[number, number]> = [
 ];
 
 type PosePoint = [number, number, number];
+
+function isPosePointArray(value: unknown): value is PosePoint[] {
+  return (
+    Array.isArray(value) &&
+    value.length === 33 &&
+    value.every(
+      (point) =>
+        Array.isArray(point) &&
+        point.length === 3 &&
+        point.every((coord) => typeof coord === 'number')
+    )
+  );
+}
 
 function getSocketBaseUrl() {
   const fromEnv = import.meta.env.VITE_SOCKET_BASE_URL as string | undefined;
@@ -58,6 +72,8 @@ export default function Game() {
   const lastBoundarySyncAtRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const frameSocketRef = useRef<Socket | null>(null);
+  const poseSourceRef = useRef<string | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const skeletonCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -154,7 +170,7 @@ export default function Game() {
   useEffect(() => {
     let aborted = false;
 
-    const pullLatestPose = async () => {
+    const bootstrapLatestPose = async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/edge/frames/latest`);
         if (!response.ok) {
@@ -162,7 +178,13 @@ export default function Game() {
         }
         const payload = (await response.json()) as {
           data?: {
-            frames?: Record<string, { latest_pose?: number[][] }>;
+            frames?: Record<
+              string,
+              {
+                latest_pose?: number[][];
+                source?: string;
+              }
+            >;
           };
         };
 
@@ -171,24 +193,54 @@ export default function Game() {
           return;
         }
 
-        const firstFrame = Object.values(frames)[0];
+        const [firstSource, firstFrame] = Object.entries(frames)[0] ?? [];
         const pose = firstFrame?.latest_pose;
-        if (!aborted && Array.isArray(pose)) {
-          setLatestPose(pose as PosePoint[]);
+        if (!aborted && isPosePointArray(pose)) {
+          poseSourceRef.current = firstFrame?.source ?? firstSource ?? null;
+          setLatestPose(pose);
         }
       } catch {
-        // 靜默處理輪詢錯誤，避免打斷遊戲流程。
+        // 靜默處理初始同步錯誤，避免打斷遊戲流程。
       }
     };
 
-    void pullLatestPose();
-    const timer = window.setInterval(() => {
-      void pullLatestPose();
-    }, 350);
+    const frameSocket = io(`${getSocketBaseUrl()}${FRAME_NAMESPACE}`, {
+      transports: ['websocket', 'polling'],
+      timeout: 10000,
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+    frameSocketRef.current = frameSocket;
+
+    frameSocket.on(
+      'frame_broadcast',
+      (payload: { source?: string; latest_pose?: unknown }) => {
+        const source = payload?.source?.trim();
+        if (!source) {
+          return;
+        }
+        if (poseSourceRef.current && poseSourceRef.current !== source) {
+          return;
+        }
+        if (!poseSourceRef.current) {
+          poseSourceRef.current = source;
+        }
+        if (!isPosePointArray(payload?.latest_pose)) {
+          return;
+        }
+        if (!aborted) {
+          setLatestPose(payload.latest_pose);
+        }
+      }
+    );
+
+    void bootstrapLatestPose();
 
     return () => {
       aborted = true;
-      window.clearInterval(timer);
+      frameSocket.disconnect();
+      frameSocketRef.current = null;
     };
   }, []);
 

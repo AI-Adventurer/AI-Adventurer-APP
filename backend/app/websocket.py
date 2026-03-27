@@ -42,9 +42,32 @@ def init_websocket(app):
         try:
             result = edge_service.ingest_frame(data)
             emit("response", result)
-            
-            # 廣播給所有連線客戶端 (可選)
-            # socketio.emit("frame_broadcast", data, broadcast=True)
+
+            if result.get("success"):
+                source = str(data.get("source", "")).strip()
+                latest_frame = edge_service.get_latest_frame(source) if source else None
+                if latest_frame is not None:
+                    latest_pose = (
+                        latest_frame.pose.points
+                        if latest_frame.pose
+                        else latest_frame.skeleton_sequence.frames[-1]
+                        if latest_frame.skeleton_sequence.frames
+                        else []
+                    )
+                    socketio.emit(
+                        "frame_broadcast",
+                        {
+                            "source": latest_frame.source,
+                            "frame_id": latest_frame.frame_id,
+                            "timestamp": latest_frame.timestamp,
+                            "stable_action": latest_frame.stable_action,
+                            "confidence": latest_frame.confidence,
+                            "latest_pose": latest_pose,
+                        },
+                        namespace="/edge/frames",
+                        broadcast=True,
+                        include_self=False,
+                    )
             
         except Exception as e:
             logger.error(f"Error handling frame: {e}")
