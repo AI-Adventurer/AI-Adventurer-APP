@@ -40,7 +40,10 @@ def chat(payload: dict) -> tuple[dict[str, str] | None, dict[str, object] | None
         }
 
     system_prompt = payload.get("system_prompt")
-    selected_system_prompt = str(system_prompt).strip() if system_prompt else None
+    if system_prompt is not None:
+        selected_system_prompt = str(system_prompt).strip() or None
+    else:
+        selected_system_prompt = get_config().llm_system_prompt or None
 
     reply, _upstream_error = _client.chat(
         prompt=message,

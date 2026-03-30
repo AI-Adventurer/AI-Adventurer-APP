@@ -39,9 +39,15 @@ class OllamaClient:
                     continue
                 request_messages.append({"role": role, "content": content})
 
+        # 系統級 prompt 優先級最高：若沒有 system 訊息則補在最前面。
+        if system_prompt:
+            has_system_message = any(msg.get("role") == "system" for msg in request_messages)
+            if not has_system_message:
+                request_messages.insert(0, {"role": "system", "content": system_prompt})
+
         if not request_messages:
-            if system_prompt:
-                request_messages.append({"role": "system", "content": system_prompt})
+            request_messages.append({"role": "user", "content": prompt})
+        elif not any(msg.get("role") == "user" for msg in request_messages):
             request_messages.append({"role": "user", "content": prompt})
 
         payload = {

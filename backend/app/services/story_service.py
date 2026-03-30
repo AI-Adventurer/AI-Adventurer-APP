@@ -1,3 +1,4 @@
+from app.config import get_config
 from app.domain import StoryTeller
 from app.integrations import OllamaClient
 from app.models import StoryResult
@@ -23,9 +24,16 @@ def generate(
     generated_story = None
     if prompt:
         model = payload.get("model")
+        system_prompt = payload.get("system_prompt")
+        if system_prompt is not None:
+            selected_system_prompt = str(system_prompt).strip() or None
+        else:
+            selected_system_prompt = get_config().llm_system_prompt or None
+
         generated_story, _upstream_error = _client.chat(
             prompt=str(prompt),
             model=str(model) if model else None,
+            system_prompt=selected_system_prompt,
         )
 
     story = _story_teller.to_story_result(
