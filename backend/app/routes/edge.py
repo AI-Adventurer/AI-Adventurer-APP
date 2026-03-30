@@ -1,5 +1,5 @@
-"""Edge 設備路由 (WebSocket / WebRTC)"""
 from flask import Blueprint, request
+
 from app.services.edge_service import edge_service
 from app.utils import success
 from app.utils.logger import get_logger

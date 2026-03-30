@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from typing import Any, Mapping
+
+from app.models import StoryResult
+
+from .engines import resolve_chapter
+
+
 CHAPTER_PROMPTS: dict[int, str] = {
     1: (
         "這個對話就負責幫我產出動作冒險遊戲劇情文字敘述，目前情境: 叢林中，"
@@ -78,3 +85,57 @@ def build_keywords_prompt(chapter: int, keywords: str) -> str:
 def build_chapter_prompt(chapter: int) -> str:
     keywords = CHAPTER_KEYWORDS.get(chapter, CHAPTER_KEYWORDS[1])
     return build_keywords_prompt(chapter=chapter, keywords=keywords)
+
+
+class StoryTeller:
+    """Domain rules for chapter switching and story context generation."""
+
+    def __init__(self, fallback_by_chapter: dict[int, str] | None = None):
+        self._fallback_by_chapter = fallback_by_chapter or {
+            1: "你屏住呼吸，繼續在叢林深處探索。",
+            2: "你穩住步伐，在危險的橋面上繼續前行。",
+            3: "你咬牙衝刺，在洞穴追逐中尋找生機。",
+        }
+
+    def sync_chapter(self, chapter_id: str | None, payload: Mapping[str, Any]) -> str:
+        current = resolve_chapter(chapter_id)
+        if payload.get("reset_chapter"):
+            return "chapter-1"
+        if payload.get("advance_chapter"):
+            return f"chapter-{min(3, current + 1)}"
+        return chapter_id or "chapter-1"
+
+    def build_story_context(self, chapter_id: str | None, payload: Mapping[str, Any]) -> dict[str, Any]:
+        chapter = resolve_chapter(chapter_id)
+        prompt: str | None
+        if payload.get("prompt"):
+            prompt = str(payload["prompt"]).strip()
+        elif payload.get("loop_id") is not None:
+            prompt = build_loop_prompt(int(payload["loop_id"]))
+        else:
+            prompt = build_chapter_prompt(chapter)
+
+        return {
+            "chapter": chapter,
+            "prompt": prompt,
+            "template_key": str(payload.get("template_key", f"chapter-{chapter}_story")),
+            "tone": "adventure",
+        }
+
+    def to_story_result(
+        self,
+        *,
+        chapter: int,
+        payload: Mapping[str, Any],
+        generated_story: str | None,
+    ) -> StoryResult:
+        template_key = str(payload.get("template_key", f"chapter-{chapter}_story"))
+        final_story = generated_story or self._fallback_by_chapter.get(
+            chapter,
+            self._fallback_by_chapter[1],
+        )
+        return StoryResult(
+            story_segment=final_story,
+            tone="adventure",
+            template_key=template_key,
+        )

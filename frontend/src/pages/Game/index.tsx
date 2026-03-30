@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -206,14 +208,19 @@ export default function Game() {
   const remoteDescriptionAppliedRef = useRef(false);
   const skeletonCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const latestPoseRef = useRef<PosePoint[] | null>(null);
+  const lastPoseUpdateTimeRef = useRef<number>(0);
   const overlayFrameRef = useRef<number | null>(null);
   const scheduleOverlayDrawRef = useRef<() => void>(() => {});
+  const previewErrorToastRef = useRef<string | null>(null);
+  const poseErrorToastRef = useRef<string | null>(null);
   const [previewStatus, setPreviewStatus] = useState(
     '等待 Jetson 影像來源連線...'
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [poseStatus, setPoseStatus] = useState('等待骨架資料連線...');
   const [poseError, setPoseError] = useState<string | null>(null);
+  const [poseDataStale, setPoseDataStale] = useState(true);
+  const [isRefreshingStream, setIsRefreshingStream] = useState(false);
 
   const gameState = gameStateQuery.data?.data;
   const currentEvent = currentEventQuery.data?.data;
@@ -291,6 +298,66 @@ export default function Game() {
         ? 'game-card-fail'
         : '';
 
+  const videoConnected = !previewError && previewStatus.includes('已接收');
+  const poseConnected =
+    !poseError &&
+    !poseDataStale &&
+    (poseStatus.includes('已接收') || poseStatus.includes('已鎖定'));
+
+  const handleRefreshStreamStatus = () => {
+    const edgeSource = activeVideoSourceRef.current ?? poseSourceRef.current;
+    setIsRefreshingStream(true);
+
+    socketRef.current?.emit('request_offer', {
+      source: FRONTEND_SOURCE,
+      target: edgeSource,
+    });
+
+    if (frameSocketRef.current && !frameSocketRef.current.connected) {
+      frameSocketRef.current.connect();
+    }
+    bootstrapPoseRef.current(edgeSource);
+    setPreviewStatus('已手動刷新，等待 Jetson 回應 Offer...');
+
+    window.setTimeout(() => {
+      setIsRefreshingStream(false);
+    }, 650);
+  };
+
+  useEffect(() => {
+    if (!previewError) {
+      previewErrorToastRef.current = null;
+      return;
+    }
+
+    if (previewErrorToastRef.current === previewError) {
+      return;
+    }
+
+    previewErrorToastRef.current = previewError;
+    toast.error('視訊鏡頭串流錯誤', {
+      id: 'game-video-error',
+      description: previewError,
+    });
+  }, [previewError]);
+
+  useEffect(() => {
+    if (!poseError) {
+      poseErrorToastRef.current = null;
+      return;
+    }
+
+    if (poseErrorToastRef.current === poseError) {
+      return;
+    }
+
+    poseErrorToastRef.current = poseError;
+    toast.error('骨架資料串流錯誤', {
+      id: 'game-pose-error',
+      description: poseError,
+    });
+  }, [poseError]);
+
   // 本地時鐘：用 server_time 校正後自行更新剩餘時間。
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -313,6 +380,8 @@ export default function Game() {
       }
       poseSourceRef.current = source;
       latestPoseRef.current = pose;
+      lastPoseUpdateTimeRef.current = Date.now();
+      setPoseDataStale(false);
       setPoseStatus(`已接收骨架資料 (${source})`);
       setPoseError(null);
       scheduleOverlayDrawRef.current();
@@ -425,12 +494,14 @@ export default function Game() {
 
     frameSocket.on('disconnect', () => {
       if (!aborted) {
+        setPoseDataStale(true);
         setPoseStatus('骨架即時通道中斷，嘗試重新連線中...');
       }
     });
 
     frameSocket.on('connect_error', () => {
       if (!aborted) {
+        setPoseDataStale(true);
         setPoseError(
           '骨架即時通道連線失敗，請檢查 /socket.io 與 /edge 代理設定。'
         );
@@ -462,8 +533,22 @@ export default function Game() {
 
     void bootstrapLatestPose();
 
+    // 檢查骨架資料是否過期（2 秒無新資料）
+    const POSE_STALE_THRESHOLD_MS = 2000;
+    const staleCheckInterval = window.setInterval(() => {
+      if (aborted) {
+        return;
+      }
+      const lastUpdateMs = lastPoseUpdateTimeRef.current;
+      const nowMs = Date.now();
+      if (lastUpdateMs > 0 && nowMs - lastUpdateMs > POSE_STALE_THRESHOLD_MS) {
+        setPoseDataStale(true);
+      }
+    }, 500);
+
     return () => {
       aborted = true;
+      window.clearInterval(staleCheckInterval);
       bootstrapPoseRef.current = () => {};
       frameSocket.disconnect();
       frameSocketRef.current = null;
@@ -484,7 +569,12 @@ export default function Game() {
 
     const drawOverlayFrame = () => {
       overlayFrameRef.current = null;
-      drawPoseOverlay(ctx, canvas, videoRef.current ?? video, latestPoseRef.current);
+      drawPoseOverlay(
+        ctx,
+        canvas,
+        videoRef.current ?? video,
+        latestPoseRef.current
+      );
     };
 
     const scheduleOverlayRefresh = () => {
@@ -838,10 +928,46 @@ export default function Game() {
       <BackHomeButton />
       <div className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
             <CardTitle>鏡頭畫面</CardTitle>
+            <div className="flex items-center gap-3 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-[11px] font-medium text-foreground/90 backdrop-blur-sm">
+              <div className="flex items-center gap-1.5">
+                <span>視訊鏡頭</span>
+                <span
+                  className={`status-indicator ${
+                    videoConnected
+                      ? 'status-dot-connected'
+                      : 'status-dot-loading'
+                  }`}
+                />
+              </div>
+              <div className="h-3.5 w-px bg-border/70" />
+              <div className="flex items-center gap-1.5">
+                <span>骨架資料</span>
+                <span
+                  className={`status-indicator ${
+                    poseConnected
+                      ? 'status-dot-connected'
+                      : 'status-dot-loading'
+                  }`}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleRefreshStreamStatus}
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border/70 bg-background/75 text-foreground/80 transition hover:bg-muted/60"
+                aria-label="重新整理串流狀態"
+                title="重新整理串流"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${
+                    isRefreshingStream ? 'animate-spin' : ''
+                  }`}
+                />
+              </button>
+            </div>
           </CardHeader>
-          <CardContent className="h-full">
+          <CardContent>
             <div className="relative flex h-[min(74vh,700px)] min-h-[420px] items-center justify-center overflow-hidden rounded-xl border border-dashed border-border/60 bg-[linear-gradient(145deg,hsl(var(--muted)/0.5),hsl(var(--card)))] text-sm text-muted-foreground">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_25%,hsl(var(--primary)/0.2),transparent_38%),radial-gradient(circle_at_78%_80%,hsl(var(--primary)/0.12),transparent_42%)]" />
               <video
@@ -855,19 +981,6 @@ export default function Game() {
                 ref={skeletonCanvasRef}
                 className="pointer-events-none absolute inset-0 z-20 h-full w-full"
               />
-              <div className="pointer-events-none absolute inset-x-4 bottom-4 z-20 rounded-md border border-border/70 bg-background/75 px-3 py-2 text-xs backdrop-blur">
-                <p className="font-medium text-foreground">
-                  Camera Stream Preview
-                </p>
-                <p className="text-muted-foreground">{previewStatus}</p>
-                <p className="text-muted-foreground">{poseStatus}</p>
-                {previewError ? (
-                  <p className="mt-1 text-destructive">{previewError}</p>
-                ) : null}
-                {poseError ? (
-                  <p className="mt-1 text-destructive">{poseError}</p>
-                ) : null}
-              </div>
             </div>
           </CardContent>
         </Card>

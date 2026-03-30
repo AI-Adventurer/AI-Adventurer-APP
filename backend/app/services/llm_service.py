@@ -2,66 +2,63 @@ from app.config import get_config
 from app.integrations import OllamaClient
 
 
-class LLMService:
-    def __init__(self, client: OllamaClient):
-        self._client = client
+_client = OllamaClient()
 
-    def chat(self, payload: dict) -> tuple[dict[str, str] | None, dict[str, object] | None]:
-        message = str(payload.get("message", "")).strip()
-        raw_messages = payload.get("messages")
-        message_history: list[dict[str, str]] = []
-        if isinstance(raw_messages, list):
-            for item in raw_messages:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role", "")).strip().lower()
-                content = str(item.get("content", "")).strip()
-                if role not in {"system", "user", "assistant"}:
-                    continue
-                if not content:
-                    continue
-                message_history.append({"role": role, "content": content})
 
-        if not message and not message_history:
-            return None, {
-                "code": "missing_input",
-                "status_code": 422,
-                "message": "Field 'message' or 'messages' is required.",
-                "details": {"missing": ["message", "messages"]},
-            }
+def chat(payload: dict) -> tuple[dict[str, str] | None, dict[str, object] | None]:
+    message = str(payload.get("message", "")).strip()
+    raw_messages = payload.get("messages")
+    message_history: list[dict[str, str]] = []
+    if isinstance(raw_messages, list):
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "")).strip().lower()
+            content = str(item.get("content", "")).strip()
+            if role not in {"system", "user", "assistant"}:
+                continue
+            if not content:
+                continue
+            message_history.append({"role": role, "content": content})
 
-        model = payload.get("model")
-        selected_model = str(model).strip() if model else get_config().llm_model
-        if not selected_model:
-            return None, {
-                "code": "invalid_model",
-                "status_code": 422,
-                "message": "Field 'model' cannot be empty.",
-                "details": {"field": "model"},
-            }
+    if not message and not message_history:
+        return None, {
+            "code": "missing_input",
+            "status_code": 422,
+            "message": "Field 'message' or 'messages' is required.",
+            "details": {"missing": ["message", "messages"]},
+        }
 
-        system_prompt = payload.get("system_prompt")
-        selected_system_prompt = str(system_prompt).strip() if system_prompt else None
+    model = payload.get("model")
+    selected_model = str(model).strip() if model else get_config().llm_model
+    if not selected_model:
+        return None, {
+            "code": "invalid_model",
+            "status_code": 422,
+            "message": "Field 'model' cannot be empty.",
+            "details": {"field": "model"},
+        }
 
-        reply, _upstream_error = self._client.chat(
-            prompt=message,
-            model=selected_model,
-            system_prompt=selected_system_prompt,
-            messages=message_history or None,
-        )
-        if not reply:
-            return None, {
-                "code": "llm_unavailable",
-                "status_code": 503,
-                "message": "LLM service unavailable.",
-            }
+    system_prompt = payload.get("system_prompt")
+    selected_system_prompt = str(system_prompt).strip() if system_prompt else None
 
-        return (
-            {
-                "reply": reply,
-                "model": selected_model,
-            },
-            None,
-        )
+    reply, _upstream_error = _client.chat(
+        prompt=message,
+        model=selected_model,
+        system_prompt=selected_system_prompt,
+        messages=message_history or None,
+    )
+    if not reply:
+        return None, {
+            "code": "llm_unavailable",
+            "status_code": 503,
+            "message": "LLM service unavailable.",
+        }
 
-llm_service = LLMService(client=OllamaClient())
+    return (
+        {
+            "reply": reply,
+            "model": selected_model,
+        },
+        None,
+    )

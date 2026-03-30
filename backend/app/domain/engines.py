@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from random import choice
+from time import time
 from typing import Any
+from uuid import uuid4
+
+from app.models import EventRecord, GameState
 
 JUNGLE_EVENTS: list[dict[str, Any]] = [
     {
@@ -132,8 +136,64 @@ def resolve_chapter(chapter_id: str | None) -> int:
     return 1
 
 
-def pick_event(chapter: int) -> dict[str, Any]:
-    candidates = [item for item in JUNGLE_EVENTS if int(item["chapter"]) == chapter]
-    if not candidates:
-        candidates = [item for item in JUNGLE_EVENTS if int(item["chapter"]) == 1]
-    return dict(choice(candidates))
+class GameEngine:
+    """Domain rules for event judging, scoring, hp, and chapter switching."""
+
+    def pick_event(self, chapter_id: str | None) -> dict[str, Any]:
+        chapter = resolve_chapter(chapter_id)
+        candidates = [item for item in JUNGLE_EVENTS if int(item["chapter"]) == chapter]
+        if not candidates:
+            candidates = [item for item in JUNGLE_EVENTS if int(item["chapter"]) == 1]
+        return dict(choice(candidates))
+
+    def create_event_record(self, chapter_id: str | None, event_def: dict[str, Any]) -> EventRecord:
+        chapter = resolve_chapter(chapter_id)
+        return EventRecord(
+            event_id=str(uuid4()),
+            chapter=chapter,
+            text=str(event_def["text"]),
+            target_action=str(event_def["required_action"]),
+            success_text=str(event_def["success_text"]),
+            fail_text=str(event_def["fail_text"]),
+            time_limit_ms=int(float(event_def["time_limit"]) * 1000),
+            status="active",
+        )
+
+    def get_remaining_time_ms(self, event: EventRecord | None) -> int:
+        if event is None or event.status != "active":
+            return 0
+        elapsed_ms = int((time() - event.created_at) * 1000)
+        return max(0, event.time_limit_ms - elapsed_ms)
+
+    def judge_event_result(
+        self,
+        event: EventRecord,
+        observed_action: str | None,
+        confidence: float | None = None,
+        min_confidence: float = 0.55,
+    ) -> str:
+        if not observed_action:
+            return "pending"
+        if confidence is not None and confidence < min_confidence:
+            return "pending"
+        return "success" if observed_action == event.target_action else "pending"
+
+    def apply_result_effect(self, state: GameState, result: str) -> None:
+        if result == "success":
+            state.player_state.score += 10
+            return
+
+        state.player_state.hp = max(0, state.player_state.hp - 1)
+        state.player_state.score -= 10
+
+    def resolve_event(self, state: GameState, event: EventRecord, result: str, now: float | None = None) -> None:
+        resolved_at = now if now is not None else time()
+        state.judge_result = result
+        self.apply_result_effect(state, result)
+        state.story_segment = event.success_text if result == "success" else event.fail_text
+        state.time_remaining_ms = 0
+        event.status = "resolved"
+        event.resolved_at = resolved_at
+
+    def next_chapter_id(self, chapter_id: str | None) -> str:
+        return f"chapter-{min(3, resolve_chapter(chapter_id) + 1)}"

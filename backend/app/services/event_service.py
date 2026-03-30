@@ -1,132 +1,124 @@
-from uuid import uuid4
 from time import time
 
-from app.domain import pick_event, resolve_chapter
+from app.domain import GameEngine
 from app.models import EventRecord
 from app.services.state_store import store
 
 
 RESULT_DISPLAY_SECONDS = 5.0
 STORY_DISPLAY_SECONDS = 10.0
+_engine = GameEngine()
+_pending_event_spawn_after = 0.0
 
 
-class EventService:
-    """Central game state machine: story -> event -> result -> next story."""
+def reset() -> None:
+    global _pending_event_spawn_after
+    store.reset()
+    _pending_event_spawn_after = 0.0
 
-    def create_event(self) -> EventRecord:
-        """Create gameplay event only from fixed definitions (JUNGLE_EVENTS), never from LLM."""
-        state = store.get_game_state()
-        chapter = resolve_chapter(state.chapter_id)
-        event_def = pick_event(chapter)
-        event = self._build_event_from_definition(chapter, event_def)
-        store.set_current_event(event)
-        store.clear_event_spawn()
 
-        # Event phase starts: expose action/timer to frontend.
-        state.event_id = event.event_id
-        state.target_action = event.target_action
-        state.time_remaining_ms = event.time_limit_ms
-        state.judge_result = "pending"
-        state.story_segment = event.text
+def start_game():
+    from app.services import story_service
 
-        return event
+    reset()
+    story = story_service.generate(
+        {"reset_chapter": True},
+        sync_to_game_view=True,
+    )
+    _schedule_event_spawn(STORY_DISPLAY_SECONDS)
+    store.get_game_state().time_remaining_ms = int(STORY_DISPLAY_SECONDS * 1000)
+    return story
 
-    def _build_event_from_definition(self, chapter: int, event_def: dict) -> EventRecord:
-        return EventRecord(
-            event_id=str(uuid4()),
-            chapter=chapter,
-            text=str(event_def["text"]),
-            target_action=str(event_def["required_action"]),
-            success_text=str(event_def["success_text"]),
-            fail_text=str(event_def["fail_text"]),
-            time_limit_ms=int(float(event_def["time_limit"]) * 1000),
-            status="active",
-        )
 
-    def get_remaining_time_ms(self) -> int:
-        """Return remaining time for active event phase."""
-        current = store.get_current_event()
-        if not current or current.status != "active":
-            return 0
+def _schedule_event_spawn(delay_s: float = 0.0) -> None:
+    global _pending_event_spawn_after
+    _pending_event_spawn_after = time() + max(0.0, delay_s)
 
-        elapsed_ms = int((time() - current.created_at) * 1000)
-        remaining = max(0, current.time_limit_ms - elapsed_ms)
-        return remaining
 
-    def process_game_tick(self) -> None:
-        """Backend-driven phase transitions and countdown updates."""
-        state = store.get_game_state()
-        current = store.get_current_event()
-        now = time()
+def _should_spawn_event(now: float) -> bool:
+    return _pending_event_spawn_after > 0 and now >= _pending_event_spawn_after
 
-        self._update_story_phase_countdown(state, current)
 
-        if (current is None or current.status == "completed") and store.should_spawn_event():
-            self.create_event()
+def _get_spawn_remaining_ms(now: float) -> int:
+    if _pending_event_spawn_after <= 0:
+        return 0
+    return max(0, int((_pending_event_spawn_after - now) * 1000))
+
+
+def _clear_spawn_schedule() -> None:
+    global _pending_event_spawn_after
+    _pending_event_spawn_after = 0.0
+
+
+def create_event() -> EventRecord:
+    state = store.get_game_state()
+    event_def = _engine.pick_event(state.chapter_id)
+    event = _engine.create_event_record(state.chapter_id, event_def)
+    store.set_current_event(event)
+
+    state.event_id = event.event_id
+    state.target_action = event.target_action
+    state.time_remaining_ms = event.time_limit_ms
+    state.judge_result = "pending"
+    state.story_segment = event.text
+
+    _clear_spawn_schedule()
+    return event
+
+
+def get_remaining_time_ms() -> int:
+    return _engine.get_remaining_time_ms(store.get_current_event())
+
+
+def process_game_tick() -> None:
+    state = store.get_game_state()
+    current = store.get_current_event()
+    now = time()
+
+    # Service 決定何時 spawn event 與倒數顯示。
+    if current is None or current.status == "completed":
+        state.time_remaining_ms = _get_spawn_remaining_ms(now)
+        if _should_spawn_event(now):
+            create_event()
             current = store.get_current_event()
 
-        if current and current.status == "active":
-            remaining_ms = self.get_remaining_time_ms()
-            state.time_remaining_ms = remaining_ms
-            if remaining_ms <= 0:
-                self._resolve_current_event("fail")
-                current = store.get_current_event()
+    # Domain 判斷事件是否超時失敗。
+    if current and current.status == "active":
+        remaining_ms = _engine.get_remaining_time_ms(current)
+        state.time_remaining_ms = remaining_ms
+        if remaining_ms <= 0:
+            _engine.resolve_event(state, current, result="fail", now=now)
+            current = store.get_current_event()
 
-        if current and current.status == "resolved":
-            if current.resolved_at is not None:
-                remain = RESULT_DISPLAY_SECONDS - (now - current.resolved_at)
-                state.time_remaining_ms = max(0, int(remain * 1000))
-            if current.resolved_at is not None and (now - current.resolved_at) >= RESULT_DISPLAY_SECONDS:
-                self._advance_after_resolution(current)
+    # Service 決定何時產生下一段 story 與同步回 game view。
+    if current and current.status == "resolved":
+        if current.resolved_at is not None:
+            remain = RESULT_DISPLAY_SECONDS - (now - current.resolved_at)
+            state.time_remaining_ms = max(0, int(remain * 1000))
 
-    def _update_story_phase_countdown(self, state, current: EventRecord | None) -> None:
-        """Keep countdown visible while waiting for the next event spawn."""
-        if (current is None or current.status == "completed") and not store.should_spawn_event():
-            state.time_remaining_ms = store.get_event_spawn_remaining_ms()
+        if (
+            current.resolved_at is not None
+            and (now - current.resolved_at) >= RESULT_DISPLAY_SECONDS
+        ):
+            from app.services import story_service
 
-    def _resolve_current_event(self, result: str) -> None:
-        state = store.get_game_state()
-        current = store.get_current_event()
-        if not current or current.status != "active":
-            return
+            state.chapter_id = _engine.next_chapter_id(state.chapter_id)
+            story_service.generate(
+                {},
+                sync_to_game_view=True,
+            )
 
-        state.judge_result = result
-        self._apply_result_effect(state, result)
-
-        # 成敗結果使用固定文案顯示，不經 LLM。
-        state.story_segment = current.success_text if result == "success" else current.fail_text
-
-        current.status = "resolved"
-        current.resolved_at = time()
-        state.time_remaining_ms = 0
-
-    def _apply_result_effect(self, state, result: str) -> None:
-        if result == "success":
-            state.player_state.score += 10
-            return
-
-        state.player_state.hp = max(0, state.player_state.hp - 1)
-        state.player_state.score -= 10
-
-    def _advance_after_resolution(self, current: EventRecord) -> None:
-        from app.services.story_service import story_service
-
-        state = store.get_game_state()
-        story_service.generate({"advance_chapter": True})
-
-        current.status = "completed"
-        state.event_id = None
-        state.target_action = None
-        state.time_remaining_ms = 0
-        state.judge_result = "pending"
-        # 下一段劇情顯示 10 秒後才進入下一個事件。
-        store.schedule_event_spawn(delay_s=STORY_DISPLAY_SECONDS)
-
-    def current_event(self) -> EventRecord | None:
-        return store.get_current_event()
-
-    def history(self) -> list[EventRecord]:
-        return store.get_event_history()
+            current.status = "completed"
+            state.event_id = None
+            state.target_action = None
+            state.time_remaining_ms = 0
+            state.judge_result = "pending"
+            _schedule_event_spawn(STORY_DISPLAY_SECONDS)
 
 
-event_service = EventService()
+def current_event() -> EventRecord | None:
+    return store.get_current_event()
+
+
+def history() -> list[EventRecord]:
+    return store.get_event_history()
