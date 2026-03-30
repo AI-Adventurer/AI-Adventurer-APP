@@ -70,6 +70,39 @@ def get_remaining_time_ms() -> int:
     return _engine.get_remaining_time_ms(store.get_current_event())
 
 
+def apply_observed_action(
+    observed_action: str | None,
+    confidence: float | None = None,
+) -> bool:
+    """Apply edge-detected action to the active game event.
+
+    Returns True when the action resolves current event as success.
+    """
+    state = store.get_game_state()
+    current = store.get_current_event()
+    now = time()
+
+    if current is None or current.status != "active":
+        return False
+
+    remaining_ms = _engine.get_remaining_time_ms(current)
+    state.time_remaining_ms = remaining_ms
+    if remaining_ms <= 0:
+        _engine.resolve_event(state, current, result="fail", now=now)
+        return False
+
+    result = _engine.judge_event_result(
+        current,
+        observed_action=observed_action,
+        confidence=confidence,
+    )
+    if result != "success":
+        return False
+
+    _engine.resolve_event(state, current, result="success", now=now)
+    return True
+
+
 def process_game_tick() -> None:
     state = store.get_game_state()
     current = store.get_current_event()

@@ -44,20 +44,60 @@ frontend/
 └── vite.config.ts
 ```
 
-## 3. 架構說明
+## 3. 設計原則
 
-- 路由入口在 `src/App.tsx`，由 `RootLayout` 統一承接設定面板與頁面 context。
-- API 層採用「每端點一檔」策略，集中於 `src/api/`。
-- React Query 使用 `hooks/queries` 與 `hooks/mutations` 分離管理。
-- 全域 API 行為（base URL、錯誤處理、序列化）統一在 `src/lib/apiClient.ts`。
-- Theme 與 Debug 模式由共用元件控制，避免頁面重複邏輯。
+### 3.1 頁面級架構 (Pages-Based Architecture)
 
-目前頁面路由：
+每個頁面視為獨立功能模組，頁面內部可以依需求拆分出專屬的元件、hooks 與工具函式，避免所有邏輯集中在單一檔案。
 
-- `/`、`/home`：首頁
-- `/game`：遊戲主畫面
-- `/calibration`：姿態校正（TODO）
-- `/how-to-play`：玩法說明（TODO）
+```text
+pages/
+├── Home/
+├── Game/
+│   ├── index.tsx
+│   ├── components/
+│   ├── hooks/             # (可選) 頁面專屬 Hook
+│   └── lib/               # (可選) 頁面專屬工具函式
+│   └── ui/                # (可選) 該頁面專屬 UI 元件
+├── Calibration/
+└── HowToPlay/
+```
+
+### 3.2 共享資源原則
+
+跨頁面重用的邏輯與元件放在 `src` 的共享目錄，避免複製貼上與隱性耦合。
+
+- `src/components/`: 多個頁面共用元件
+- `src/api/`: API 請求函式（每個 endpoint 一個檔案）
+- `src/hooks/`: 跨頁共享 hooks
+- `src/context/`: 全域狀態上下文（若新增 auth/session 等全域狀態時使用）
+- `src/lib/`: 工具函式與客戶端封裝
+- `src/constants/`: 全域常數配置（若新增角色、狀態列舉時使用）
+- `src/types/`: 全域型別定義
+
+### 3.3 元件解構原則
+
+當單一元件職責膨脹（例如 300~500 行以上、同時處理多段流程與 UI 區塊）時，應改為目錄式拆分。
+
+```text
+# 不推薦
+GamePanel.tsx  # 單檔承載所有 UI + 狀態邏輯
+
+# 推薦
+GamePanel/
+├── index.tsx              # 主元件邏輯
+├── components/            # 子元件
+│   ├── StatusIndicator.tsx
+│   ├── EventTimeline.tsx
+│   └── ActionButtons.tsx
+└── hooks/                 # (可選) 元件專屬 Hook
+```
+
+建議拆分時機：
+
+- 元件同時處理資料請求、狀態機、複雜互動與多區塊 UI
+- 同一段 JSX 結構重複出現
+- 子區塊可以獨立測試或跨頁重用
 
 ## 4. 開發指令
 

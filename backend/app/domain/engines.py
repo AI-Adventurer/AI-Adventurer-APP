@@ -184,7 +184,7 @@ class GameEngine:
             return
 
         state.player_state.hp = max(0, state.player_state.hp - 1)
-        state.player_state.score -= 10
+        state.player_state.score = max(0, state.player_state.score - 10)
 
     def resolve_event(self, state: GameState, event: EventRecord, result: str, now: float | None = None) -> None:
         resolved_at = now if now is not None else time()

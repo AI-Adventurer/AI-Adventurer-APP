@@ -32,7 +32,7 @@ class EventRecord:
 
 @dataclass
 class PlayerState:
-    hp: int = 3
+    hp: int = 5
     score: int = 0
 
     def to_dict(self) -> dict[str, Any]:

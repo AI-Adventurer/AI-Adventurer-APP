@@ -1,201 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import { RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import BackHomeButton from '@/components/common/BackHomeButton';
 import { useCurrentEvent } from '@/hooks/queries/useCurrentEvent';
 import { useCurrentStory } from '@/hooks/queries/useCurrentStory';
 import { useGameState } from '@/hooks/queries/useGameState';
-import { API_BASE_URL } from '@/lib/apiClient';
-const maxHp = 3;
-const FRAME_NAMESPACE = '/edge/frames';
-const VIDEO_NAMESPACE = '/edge/video';
-const FRONTEND_SOURCE = 'frontend-preview';
-const POSE_CONNECTIONS: Array<[number, number]> = [
-  [11, 12],
-  [11, 13],
-  [13, 15],
-  [12, 14],
-  [14, 16],
-  [11, 23],
-  [12, 24],
-  [23, 24],
-  [23, 25],
-  [25, 27],
-  [27, 29],
-  [29, 31],
-  [24, 26],
-  [26, 28],
-  [28, 30],
-  [30, 32],
-];
-
-type PosePoint = [number, number, number];
-
-function isPosePointArray(value: unknown): value is PosePoint[] {
-  return (
-    Array.isArray(value) &&
-    value.length === 33 &&
-    value.every(
-      (point) =>
-        Array.isArray(point) &&
-        point.length === 3 &&
-        point.every((coord) => typeof coord === 'number')
-    )
-  );
-}
-
-function isValidPosePoint(point?: PosePoint) {
-  if (!point || point.length !== 3) {
-    return false;
-  }
-
-  const [x, y, z] = point;
-  // 全 0 點視為沒抓到，前端繪製時忽略。
-  return !(x === 0 && y === 0 && z === 0);
-}
-
-function syncCanvasSize(canvas: HTMLCanvasElement) {
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-
-  if (width <= 0 || height <= 0) {
-    return null;
-  }
-
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-
-  return { width, height };
-}
-
-function getVideoDrawRect(
-  video: HTMLVideoElement | null,
-  width: number,
-  height: number
-) {
-  if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
-    return { x: 0, y: 0, w: width, h: height };
-  }
-
-  const videoAspect = video.videoWidth / video.videoHeight;
-  const canvasAspect = width / height;
-
-  if (videoAspect > canvasAspect) {
-    const w = width;
-    const h = width / videoAspect;
-    return { x: 0, y: (height - h) / 2, w, h };
-  }
-
-  const h = height;
-  const w = height * videoAspect;
-  return { x: (width - w) / 2, y: 0, w, h };
-}
-
-function drawPoseOverlay(
-  ctx: CanvasRenderingContext2D,
-  canvas: HTMLCanvasElement,
-  video: HTMLVideoElement | null,
-  pose: PosePoint[] | null
-) {
-  const size = syncCanvasSize(canvas);
-  if (!size) {
-    return;
-  }
-
-  const { width, height } = size;
-  ctx.clearRect(0, 0, width, height);
-
-  if (!pose || pose.length !== 33) {
-    return;
-  }
-
-  // 將骨架映射到影片實際可見區域（object-contain 會有 letterbox）。
-  const videoRect = getVideoDrawRect(video, width, height);
-
-  ctx.strokeStyle = 'rgba(34, 197, 94, 0.9)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  for (const [a, b] of POSE_CONNECTIONS) {
-    const pa = pose[a];
-    const pb = pose[b];
-    if (!isValidPosePoint(pa) || !isValidPosePoint(pb)) {
-      continue;
-    }
-
-    ctx.moveTo(
-      videoRect.x + pa[0] * videoRect.w,
-      videoRect.y + pa[1] * videoRect.h
-    );
-    ctx.lineTo(
-      videoRect.x + pb[0] * videoRect.w,
-      videoRect.y + pb[1] * videoRect.h
-    );
-  }
-  ctx.stroke();
-
-  ctx.fillStyle = 'rgba(34, 197, 94, 0.95)';
-  for (const point of pose) {
-    if (!isValidPosePoint(point)) {
-      continue;
-    }
-
-    ctx.beginPath();
-    ctx.arc(
-      videoRect.x + point[0] * videoRect.w,
-      videoRect.y + point[1] * videoRect.h,
-      3,
-      0,
-      Math.PI * 2
-    );
-    ctx.fill();
-  }
-}
-
-function normalizeBaseUrl(value: string | undefined | null) {
-  const trimmed = value?.trim() ?? '';
-  if (!trimmed) {
-    return '';
-  }
-  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
-}
-
-function stripApiSuffix(value: string) {
-  return value.replace(/\/api\/?$/, '');
-}
-
-function getEdgeBaseUrl() {
-  const fromSocketEnv = normalizeBaseUrl(
-    import.meta.env.VITE_SOCKET_BASE_URL as string | undefined
-  );
-  if (fromSocketEnv) {
-    return stripApiSuffix(fromSocketEnv);
-  }
-
-  const fromApiBase = normalizeBaseUrl(API_BASE_URL);
-  if (fromApiBase) {
-    return stripApiSuffix(fromApiBase);
-  }
-
-  return window.location.origin;
-}
+import GameStatusCard from './components/GameStatusCard';
+import NarrativeCard from './components/NarrativeCard';
+import VideoStreamCard from './components/VideoStreamCard';
+import { useGameViewModel } from './hooks/useGameViewModel';
+import {
+  drawPoseOverlay,
+  FRAME_NAMESPACE,
+  FRONTEND_SOURCE,
+  getEdgeBaseUrl,
+  isPosePointArray,
+  type PosePoint,
+  VIDEO_NAMESPACE,
+} from './lib/stream';
 
 export default function Game() {
   const gameStateQuery = useGameState();
   const currentEventQuery = useCurrentEvent();
   const currentStoryQuery = useCurrentStory();
-  const [clockMs, setClockMs] = useState(() => Date.now());
-  const [serverOffsetMs, setServerOffsetMs] = useState(0);
-  const [phaseSyncArmed, setPhaseSyncArmed] = useState(false);
-  const [zeroLockedPhaseKey, setZeroLockedPhaseKey] = useState<string | null>(
-    null
-  );
-  const lastBoundarySyncAtRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const frameSocketRef = useRef<Socket | null>(null);
@@ -225,84 +53,37 @@ export default function Game() {
   const gameState = gameStateQuery.data?.data;
   const currentEvent = currentEventQuery.data?.data;
   const currentStory = currentStoryQuery.data?.data;
-  const currentHp = Math.max(
-    0,
-    Math.min(maxHp, gameState?.player_state.hp ?? 0)
-  );
-  const storyText =
-    currentStory?.story_segment?.trim() || '等待後端推進劇情...';
+  const syncAtPhaseBoundary = useCallback(() => {
+    const run = async () => {
+      const nextGameStateResult = await gameStateQuery.refetch();
+      const nextGameState =
+        nextGameStateResult.data?.data ?? gameStateQuery.data?.data;
 
-  const eventResolved =
-    gameState?.judge_result === 'success' || gameState?.judge_result === 'fail';
-  const isEventActive = currentEvent?.status === 'active';
-  const inEventPhase = isEventActive || eventResolved;
-  const phaseLabel = isEventActive
-    ? '事件挑戰'
-    : eventResolved
-      ? '結果回饋'
-      : '劇情推進';
-  const calibratedNowMs = clockMs + serverOffsetMs;
-  const localRemainingMs = Math.max(
-    0,
-    (gameState?.event_end_time ?? 0) * 1000 - calibratedNowMs
-  );
-  const narrativeCardTitle = inEventPhase ? '事件' : '劇情';
-  const narrativePhaseKey = `${narrativeCardTitle}-${currentEvent?.event_id ?? 'none'}-${gameState?.judge_result ?? 'pending'}`;
-  const displayRemainingMs =
-    zeroLockedPhaseKey === narrativePhaseKey ? 0 : localRemainingMs;
+      const judgeResult = nextGameState?.judge_result;
+      const isEventResolved =
+        judgeResult === 'success' || judgeResult === 'fail';
+      const hasEventId = Boolean(nextGameState?.event_id);
 
-  const phaseTotalMs = isEventActive
-    ? (currentEvent?.time_limit_ms ?? 10000)
-    : eventResolved
-      ? 5000
-      : 10000;
+      if (isEventResolved || hasEventId) {
+        await currentEventQuery.refetch();
+        return;
+      }
 
-  const phaseProgress = Math.max(
-    0,
-    Math.min(
-      100,
-      phaseTotalMs > 0 ? (displayRemainingMs / phaseTotalMs) * 100 : 0
-    )
-  );
+      await currentStoryQuery.refetch();
+    };
 
-  const eventNarrativeText = isEventActive
-    ? currentEvent?.text?.trim() || '事件即將開始...'
-    : eventResolved && gameState?.judge_result === 'success'
-      ? currentEvent?.success_text?.trim() || '你成功化解危機。'
-      : eventResolved && gameState?.judge_result === 'fail'
-        ? currentEvent?.fail_text?.trim() || '你未能及時化解危機。'
-        : '事件即將開始...';
+    void run();
+  }, [gameStateQuery, currentEventQuery, currentStoryQuery]);
 
-  const narrativeText = inEventPhase ? eventNarrativeText : storyText;
-  const narrativeBadge = isEventActive ? 'Action' : 'Story';
-  const narrativeTargetAction = isEventActive
-    ? (gameState?.target_action ?? '-')
-    : null;
-  const [renderedNarrative, setRenderedNarrative] = useState({
-    key: narrativePhaseKey,
-    title: narrativeCardTitle,
-    text: narrativeText,
-    badge: narrativeBadge,
-    targetAction: narrativeTargetAction,
+  const { gameStatusProps, narrativeProps } = useGameViewModel({
+    gameState,
+    currentEvent,
+    currentStory,
+    isStoryLoading: Boolean(
+      currentStoryQuery.isFetching || currentStoryQuery.isPending
+    ),
+    onBoundarySync: syncAtPhaseBoundary,
   });
-  const [cardAnimClass, setCardAnimClass] = useState('game-card-enter-right');
-
-  const timeLeftSecondsValue = Math.max(0, displayRemainingMs / 1000);
-  const timeLeftSecondsDisplay = timeLeftSecondsValue.toFixed(1);
-  const isEventDangerTime = isEventActive && timeLeftSecondsValue <= 3;
-
-  const cardOutcomeClass =
-    eventResolved && gameState?.judge_result === 'success'
-      ? 'game-card-success'
-      : eventResolved && gameState?.judge_result === 'fail'
-        ? 'game-card-fail'
-        : '';
-
-  const videoConnected = !previewError && previewStatus.includes('已接收');
-  const poseConnected =
-    !poseError &&
-    !poseDataStale &&
-    (poseStatus.includes('已接收') || poseStatus.includes('已鎖定'));
 
   const handleRefreshStreamStatus = () => {
     const edgeSource = activeVideoSourceRef.current ?? poseSourceRef.current;
@@ -357,14 +138,6 @@ export default function Game() {
       description: poseError,
     });
   }, [poseError]);
-
-  // 本地時鐘：用 server_time 校正後自行更新剩餘時間。
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setClockMs(Date.now());
-    }, 100);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     let aborted = false;
@@ -620,88 +393,6 @@ export default function Game() {
   }, []);
 
   useEffect(() => {
-    if (!gameState) {
-      return;
-    }
-    setServerOffsetMs(gameState.server_time * 1000 - Date.now());
-  }, [gameState?.server_time]);
-
-  // 同一個 phase 一旦歸零，鎖定為 0，避免切換延遲造成倒數回彈。
-  useEffect(() => {
-    if (zeroLockedPhaseKey && zeroLockedPhaseKey !== narrativePhaseKey) {
-      setZeroLockedPhaseKey(null);
-    }
-  }, [narrativePhaseKey, zeroLockedPhaseKey]);
-
-  useEffect(() => {
-    if (localRemainingMs <= 0 && zeroLockedPhaseKey !== narrativePhaseKey) {
-      setZeroLockedPhaseKey(narrativePhaseKey);
-    }
-  }, [localRemainingMs, narrativePhaseKey, zeroLockedPhaseKey]);
-
-  // 到點後改為節流重試同步，避免卡在 0 秒卻沒切到下一輪。
-  useEffect(() => {
-    if (!gameState) {
-      return;
-    }
-
-    if (localRemainingMs > 120) {
-      if (phaseSyncArmed) {
-        setPhaseSyncArmed(false);
-      }
-      return;
-    }
-
-    const nowMs = Date.now();
-    const retryGapMs = phaseSyncArmed ? 650 : 0;
-    if (nowMs - lastBoundarySyncAtRef.current < retryGapMs) {
-      return;
-    }
-
-    lastBoundarySyncAtRef.current = nowMs;
-    if (!phaseSyncArmed) {
-      setPhaseSyncArmed(true);
-    }
-    void gameStateQuery.refetch();
-    void currentEventQuery.refetch();
-    void currentStoryQuery.refetch();
-  }, [
-    gameState,
-    localRemainingMs,
-    phaseSyncArmed,
-    gameStateQuery,
-    currentEventQuery,
-    currentStoryQuery,
-  ]);
-
-  useEffect(() => {
-    if (narrativePhaseKey === renderedNarrative.key) {
-      return;
-    }
-
-    setCardAnimClass('game-card-exit-left');
-    const timer = window.setTimeout(() => {
-      setRenderedNarrative({
-        key: narrativePhaseKey,
-        title: narrativeCardTitle,
-        text: narrativeText,
-        badge: narrativeBadge,
-        targetAction: narrativeTargetAction,
-      });
-      setCardAnimClass('game-card-enter-right');
-    }, 210);
-
-    return () => clearTimeout(timer);
-  }, [
-    narrativePhaseKey,
-    narrativeCardTitle,
-    narrativeText,
-    narrativeBadge,
-    narrativeTargetAction,
-    renderedNarrative.key,
-  ]);
-
-  useEffect(() => {
     const edgeBaseUrl = getEdgeBaseUrl();
     const socket = io(`${edgeBaseUrl}${VIDEO_NAMESPACE}`, {
       transports: ['websocket', 'polling'],
@@ -927,134 +618,22 @@ export default function Game() {
     <section className="space-y-5 pb-8">
       <BackHomeButton />
       <div className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
-        <Card>
-          <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
-            <CardTitle>鏡頭畫面</CardTitle>
-            <div className="flex items-center gap-3 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-[11px] font-medium text-foreground/90 backdrop-blur-sm">
-              <div className="flex items-center gap-1.5">
-                <span>視訊鏡頭</span>
-                <span
-                  className={`status-indicator ${
-                    videoConnected
-                      ? 'status-dot-connected'
-                      : 'status-dot-loading'
-                  }`}
-                />
-              </div>
-              <div className="h-3.5 w-px bg-border/70" />
-              <div className="flex items-center gap-1.5">
-                <span>骨架資料</span>
-                <span
-                  className={`status-indicator ${
-                    poseConnected
-                      ? 'status-dot-connected'
-                      : 'status-dot-loading'
-                  }`}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleRefreshStreamStatus}
-                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-border/70 bg-background/75 text-foreground/80 transition hover:bg-muted/60"
-                aria-label="重新整理串流狀態"
-                title="重新整理串流"
-              >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 ${
-                    isRefreshingStream ? 'animate-spin' : ''
-                  }`}
-                />
-              </button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="relative flex h-[min(74vh,700px)] min-h-[420px] items-center justify-center overflow-hidden rounded-xl border border-dashed border-border/60 bg-[linear-gradient(145deg,hsl(var(--muted)/0.5),hsl(var(--card)))] text-sm text-muted-foreground">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_25%,hsl(var(--primary)/0.2),transparent_38%),radial-gradient(circle_at_78%_80%,hsl(var(--primary)/0.12),transparent_42%)]" />
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="relative z-10 h-full w-full object-contain"
-              />
-              <canvas
-                ref={skeletonCanvasRef}
-                className="pointer-events-none absolute inset-0 z-20 h-full w-full"
-              />
-            </div>
-          </CardContent>
-        </Card>
+        <VideoStreamCard
+          videoRef={videoRef}
+          skeletonCanvasRef={skeletonCanvasRef}
+          previewStatus={previewStatus}
+          previewError={previewError}
+          poseStatus={poseStatus}
+          poseError={poseError}
+          poseDataStale={poseDataStale}
+          isRefreshingStream={isRefreshingStream}
+          onRefresh={handleRefreshStreamStatus}
+        />
 
         <div className="grid gap-4 lg:grid-rows-[auto_1fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>遊戲狀態</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                  <p className="text-[11px] text-muted-foreground">血量</p>
-                  <p className="text-lg font-semibold tabular-nums">
-                    {currentHp}/{maxHp}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                  <p className="text-[11px] text-muted-foreground">分數</p>
-                  <p className="text-lg font-semibold tabular-nums">
-                    {gameState?.player_state.score ?? '-'}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                  <p className="text-[11px] text-muted-foreground">章節</p>
-                  <p className="text-lg font-semibold">
-                    {gameState?.chapter_id ?? '-'}
-                  </p>
-                </div>
-              </div>
+          <GameStatusCard {...gameStatusProps} />
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">{phaseLabel}</span>
-                  <span className="font-semibold tabular-nums">
-                    {timeLeftSecondsDisplay}s
-                  </span>
-                </div>
-                <Progress
-                  value={phaseProgress}
-                  className={
-                    isEventDangerTime
-                      ? 'h-2 [&_[data-slot=progress-indicator]]:bg-destructive'
-                      : 'h-2'
-                  }
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className={`${cardAnimClass} ${cardOutcomeClass}`}>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center justify-between">
-                <span>{renderedNarrative.title}卡</span>
-                <span className="rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
-                  {renderedNarrative.badge}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="min-h-40 rounded-lg border border-border/60 bg-muted/30 p-4 leading-relaxed">
-                {renderedNarrative.text}
-              </p>
-
-              {renderedNarrative.targetAction ? (
-                <div className="rounded-lg border border-border/60 bg-background/70 p-3">
-                  <p className="text-xs text-muted-foreground">目標動作</p>
-                  <p className="mt-1 text-lg font-semibold text-primary">
-                    {renderedNarrative.targetAction}
-                  </p>
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
+          <NarrativeCard {...narrativeProps} />
         </div>
       </div>
     </section>

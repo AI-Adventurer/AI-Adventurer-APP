@@ -1,5 +1,6 @@
 """WebSocket 配置和事件處理"""
 from app.services.edge_service import edge_service
+from app.services import event_service
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -45,6 +46,21 @@ def init_websocket(app):
                 emit("response", result)
                 logger.warning("Rejected edge frame payload: %s", result)
                 return
+
+            observed_action = str(data.get("stable_action", "")).strip()
+            confidence_raw = data.get("confidence", None)
+            try:
+                confidence = (
+                    float(confidence_raw) if confidence_raw is not None else None
+                )
+            except (TypeError, ValueError):
+                confidence = None
+
+            # 將 Edge 動作即時反饋到遊戲邏輯（若符合當前事件則立即判定成功）。
+            event_service.apply_observed_action(
+                observed_action=observed_action,
+                confidence=confidence,
+            )
 
             pose_data = data.get("pose") if isinstance(data, dict) else None
             pose_points = (
