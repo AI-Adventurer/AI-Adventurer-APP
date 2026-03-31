@@ -11,6 +11,79 @@ type GameStatusCardProps = {
   eventTimeLimitMs?: number;
 };
 
+const CHINESE_DIGITS = [
+  '零',
+  '一',
+  '二',
+  '三',
+  '四',
+  '五',
+  '六',
+  '七',
+  '八',
+  '九',
+] as const;
+
+function toChineseNumber(value: number): string {
+  if (!Number.isInteger(value) || value <= 0) {
+    return '';
+  }
+
+  if (value < 10) {
+    return CHINESE_DIGITS[value];
+  }
+
+  if (value < 100) {
+    const tens = Math.floor(value / 10);
+    const ones = value % 10;
+    const tensText = tens === 1 ? '十' : `${CHINESE_DIGITS[tens]}十`;
+    return ones === 0 ? tensText : `${tensText}${CHINESE_DIGITS[ones]}`;
+  }
+
+  if (value < 1000) {
+    const hundreds = Math.floor(value / 100);
+    const remainder = value % 100;
+    const hundredsText = `${CHINESE_DIGITS[hundreds]}百`;
+
+    if (remainder === 0) {
+      return hundredsText;
+    }
+
+    if (remainder < 10) {
+      return `${hundredsText}零${CHINESE_DIGITS[remainder]}`;
+    }
+
+    return `${hundredsText}${toChineseNumber(remainder)}`;
+  }
+
+  return String(value);
+}
+
+function formatChapterLabel(chapterId: string | number | undefined) {
+  if (chapterId === undefined || chapterId === null || chapterId === '') {
+    return '-';
+  }
+
+  const rawValue = String(chapterId).trim();
+  const numericPart =
+    /^chapter-(\d+)$/i.exec(rawValue)?.[1] ??
+    /^chapter(\d+)$/i.exec(rawValue)?.[1] ??
+    (/^\d+$/.test(rawValue) ? rawValue : null);
+
+  if (!numericPart) {
+    return rawValue;
+  }
+
+  const chapterNumber = Number.parseInt(numericPart, 10);
+  const chineseNumber = toChineseNumber(chapterNumber);
+
+  if (!chineseNumber) {
+    return rawValue;
+  }
+
+  return `第${chineseNumber}章`;
+}
+
 export default function GameStatusCard({
   hpRaw,
   score,
@@ -23,6 +96,7 @@ export default function GameStatusCard({
   const maxHp = 5;
   const currentHp = Math.max(0, Math.min(maxHp, hpRaw ?? 0));
   const displayScore = score === undefined ? '-' : Math.max(0, score);
+  const displayChapter = formatChapterLabel(chapterId);
   const hpPercent = (currentHp / maxHp) * 100;
   const phaseTotalMs = isEventActive
     ? (eventTimeLimitMs ?? 10000)
@@ -71,7 +145,7 @@ export default function GameStatusCard({
           </div>
           <div className="game-status-tile rounded-lg border border-border/60 bg-muted/30 p-3">
             <p className="text-[11px] text-muted-foreground">章節</p>
-            <p className="text-lg font-semibold">{chapterId ?? '-'}</p>
+            <p className="text-lg font-semibold">{displayChapter}</p>
           </div>
         </div>
 

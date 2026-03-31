@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 
 import type { NarrativeViewModel } from '../lib/stream';
 
@@ -16,7 +16,6 @@ type UseNarrativeCardInput = {
 
 export function useNarrativeCard(input: UseNarrativeCardInput) {
   const title = input.inEventPhase ? '事件' : '劇情';
-  const badge = input.isEventActive ? 'Action' : 'Story';
 
   const eventNarrativeText = input.isEventActive
     ? input.eventText?.trim() || '事件即將開始...'
@@ -34,30 +33,35 @@ export function useNarrativeCard(input: UseNarrativeCardInput) {
       key: input.phaseKey,
       title,
       text,
-      badge,
       targetAction,
     });
   const [cardAnimClass, setCardAnimClass] = useState('game-card-enter-right');
+  const [, startTransition] = useTransition();
 
   useEffect(() => {
     if (input.phaseKey === renderedNarrative.key) {
       return;
     }
 
+    // 先播放退出動畫
     setCardAnimClass('game-card-exit-left');
+
     const timer = window.setTimeout(() => {
-      setRenderedNarrative({
-        key: input.phaseKey,
-        title,
-        text,
-        badge,
-        targetAction,
+      // 使用 startTransition 是為了讓 React 知道這是一個低優先級的更新
+      // 這樣可以防止其他高優先級的更新打斷動畫序列
+      startTransition(() => {
+        setRenderedNarrative({
+          key: input.phaseKey,
+          title,
+          text,
+          targetAction,
+        });
+        setCardAnimClass('game-card-enter-right');
       });
-      setCardAnimClass('game-card-enter-right');
     }, 210);
 
     return () => clearTimeout(timer);
-  }, [input.phaseKey, title, text, badge, targetAction, renderedNarrative.key]);
+  }, [input.phaseKey, title, text, targetAction, renderedNarrative.key]);
 
   return {
     renderedNarrative,

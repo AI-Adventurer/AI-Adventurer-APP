@@ -42,7 +42,7 @@ def get_config() -> AppConfig:
         "LLM_SYSTEM_PROMPT",
         "你是冒險遊戲敘事助手，輸出內容請盡量通俗易懂，適合直接呈現給玩家閱讀。"
         "請只輸出可直接顯示給玩家的繁體中文敘事內容，避免解釋、條列與額外前後文。"
-        "輸出字數請控制在100字以內。",
+        "輸出字數請控制在80字以內。",
     ).strip()
     cors_origins = _split_csv(os.getenv("CORS_ORIGINS", "*")) or ["*"]
 

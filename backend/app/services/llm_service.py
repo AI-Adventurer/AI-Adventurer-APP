@@ -1,5 +1,6 @@
 from app.config import get_config
 from app.integrations import OllamaClient
+from app.services.rag_service import append_rag_to_prompt, append_rag_to_system_prompt
 
 
 _client = OllamaClient()
@@ -45,8 +46,21 @@ def chat(payload: dict) -> tuple[dict[str, str] | None, dict[str, object] | None
     else:
         selected_system_prompt = get_config().llm_system_prompt or None
 
+    last_user_message = ""
+    for item in reversed(message_history):
+        if item.get("role") == "user":
+            last_user_message = item.get("content", "")
+            break
+    rag_query = " ".join(part for part in [message, last_user_message] if part).strip()
+    prompt_with_rag = append_rag_to_prompt(message, rag_query, top_k=3)
+    selected_system_prompt = append_rag_to_system_prompt(
+        selected_system_prompt,
+        rag_query,
+        top_k=2,
+    )
+
     reply, _upstream_error = _client.chat(
-        prompt=message,
+        prompt=prompt_with_rag,
         model=selected_model,
         system_prompt=selected_system_prompt,
         messages=message_history or None,

@@ -2,6 +2,7 @@ from app.config import get_config
 from app.domain import StoryTeller
 from app.integrations import OllamaClient
 from app.models import StoryResult
+from app.services.rag_service import append_rag_to_prompt, append_rag_to_system_prompt
 from app.services.state_store import store
 
 
@@ -30,8 +31,16 @@ def generate(
         else:
             selected_system_prompt = get_config().llm_system_prompt or None
 
+        rag_query = f"chapter={context.get('chapter')} {prompt}"
+        prompt_with_rag = append_rag_to_prompt(str(prompt), rag_query, top_k=3)
+        selected_system_prompt = append_rag_to_system_prompt(
+            selected_system_prompt,
+            rag_query,
+            top_k=2,
+        )
+
         generated_story, _upstream_error = _client.chat(
-            prompt=str(prompt),
+            prompt=prompt_with_rag,
             model=str(model) if model else None,
             system_prompt=selected_system_prompt,
         )

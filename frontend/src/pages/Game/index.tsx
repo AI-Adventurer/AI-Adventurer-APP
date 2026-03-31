@@ -7,7 +7,7 @@ import { useCurrentEvent } from '@/hooks/queries/useCurrentEvent';
 import { useCurrentStory } from '@/hooks/queries/useCurrentStory';
 import { useGameState } from '@/hooks/queries/useGameState';
 import GameStatusCard from './components/GameStatusCard';
-import NarrativeCard from './components/NarrativeCard';
+import { NarrativeCard } from './components/NarrativeCard';
 import VideoStreamCard from './components/VideoStreamCard';
 import { useGameViewModel } from './hooks/useGameViewModel';
 import {
@@ -53,6 +53,7 @@ export default function Game() {
   const gameState = gameStateQuery.data?.data;
   const currentEvent = currentEventQuery.data?.data;
   const currentStory = currentStoryQuery.data?.data;
+  const hasStorySegment = Boolean(currentStory?.story_segment?.trim());
   const syncAtPhaseBoundary = useCallback(() => {
     const run = async () => {
       const nextGameStateResult = await gameStateQuery.refetch();
@@ -80,7 +81,8 @@ export default function Game() {
     currentEvent,
     currentStory,
     isStoryLoading: Boolean(
-      currentStoryQuery.isFetching || currentStoryQuery.isPending
+      currentStoryQuery.isPending ||
+        (currentStoryQuery.isFetching && !hasStorySegment)
     ),
     onBoundarySync: syncAtPhaseBoundary,
   });

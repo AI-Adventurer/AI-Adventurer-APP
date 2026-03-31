@@ -29,7 +29,6 @@ export type NarrativeViewModel = {
   key: string;
   title: string;
   text: string;
-  badge: string;
   targetAction: string | null;
 };
 

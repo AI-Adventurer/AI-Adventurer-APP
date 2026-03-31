@@ -19,10 +19,11 @@ export function useGameViewModel({
   isStoryLoading,
   onBoundarySync,
 }: UseGameViewModelInput) {
+  const hasEventId = Boolean(gameState?.event_id);
   const isEventResolved =
     gameState?.judge_result === 'success' || gameState?.judge_result === 'fail';
-  const isEventActive = currentEvent?.status === 'active';
-  const inEventPhase = isEventActive || isEventResolved;
+  const isEventActive = hasEventId && !isEventResolved;
+  const inEventPhase = hasEventId || isEventResolved;
 
   const calibratedNowMs = useServerClock(gameState?.server_time);
   const localRemainingMs = Math.max(
@@ -30,7 +31,7 @@ export function useGameViewModel({
     (gameState?.event_end_time ?? 0) * 1000 - calibratedNowMs
   );
 
-  const narrativePhaseKey = `${inEventPhase ? 'event' : 'story'}-${currentEvent?.event_id ?? 'none'}-${gameState?.judge_result ?? 'pending'}`;
+  const narrativePhaseKey = `${inEventPhase ? 'event' : 'story'}-${gameState?.event_id ?? 'none'}-${gameState?.judge_result ?? 'pending'}`;
 
   const { displayRemainingMs } = usePhaseSync({
     hasGameState: Boolean(gameState),
@@ -39,8 +40,9 @@ export function useGameViewModel({
     onBoundarySync,
   });
 
-  const storyText =
-    currentStory?.story_segment?.trim() || '等待後端推進劇情...';
+  const syncedStoryText =
+    gameState?.story_segment?.trim() || currentStory?.story_segment?.trim();
+  const storyText = syncedStoryText || '等待後端推進劇情...';
 
   const { renderedNarrative, cardAnimClass } = useNarrativeCard({
     phaseKey: narrativePhaseKey,
@@ -48,9 +50,15 @@ export function useGameViewModel({
     isEventActive,
     judgeResult: gameState?.judge_result,
     storyText,
-    eventText: currentEvent?.text,
-    eventSuccessText: currentEvent?.success_text,
-    eventFailText: currentEvent?.fail_text,
+    eventText: gameState?.story_segment ?? currentEvent?.text,
+    eventSuccessText:
+      gameState?.judge_result === 'success'
+        ? gameState?.story_segment ?? currentEvent?.success_text
+        : currentEvent?.success_text,
+    eventFailText:
+      gameState?.judge_result === 'fail'
+        ? gameState?.story_segment ?? currentEvent?.fail_text
+        : currentEvent?.fail_text,
     targetAction: gameState?.target_action,
   });
 

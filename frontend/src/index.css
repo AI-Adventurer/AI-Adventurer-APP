@@ -264,6 +264,146 @@
   }
 }
 
+@keyframes target-action-jump {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  42% {
+    transform: translateY(-13px);
+  }
+}
+
+@keyframes target-action-shadow-jump {
+  0%,
+  100% {
+    opacity: 0.14;
+    transform: scaleX(1);
+  }
+  42% {
+    opacity: 0.08;
+    transform: scaleX(0.72);
+  }
+}
+
+@keyframes target-action-rise-lines {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  25%,
+  70% {
+    opacity: 0.46;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes target-action-run-shift {
+  0%,
+  100% {
+    transform: translateY(1px);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes target-action-speed-lines {
+  0%,
+  100% {
+    opacity: 0.14;
+    transform: translateX(-8px);
+  }
+  50% {
+    opacity: 0.4;
+    transform: translateX(6px);
+  }
+}
+
+@keyframes target-action-crouch-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(3px);
+  }
+}
+
+@keyframes target-action-crouch-lines {
+  0%,
+  100% {
+    opacity: 0.1;
+    transform: translateY(-4px);
+  }
+  50% {
+    opacity: 0.38;
+    transform: translateY(2px);
+  }
+}
+
+@keyframes target-action-shadow-breathe {
+  0%,
+  100% {
+    opacity: 0.12;
+    transform: scaleX(0.92);
+  }
+  50% {
+    opacity: 0.18;
+    transform: scaleX(1.06);
+  }
+}
+
+@keyframes target-action-push-thrust {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  35% {
+    transform: translateX(9px);
+  }
+  65% {
+    transform: translateX(3px);
+  }
+}
+
+@keyframes target-action-block-shift {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  35% {
+    transform: translateX(10px);
+  }
+  65% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes target-action-idle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes game-target-action-fade-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.965);
+    filter: blur(3px);
+  }
+}
+
 .game-card-enter-right {
   animation: game-card-enter-right 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
   will-change: transform, opacity;
@@ -316,23 +456,11 @@
     border-color 220ms ease;
 }
 
-.game-status-card:hover {
-  transform: translateY(-2px);
-  border-color: hsl(var(--primary) / 0.35);
-  box-shadow: 0 14px 30px -22px hsl(var(--primary) / 0.5);
-}
-
 .game-status-tile {
   transition:
     transform 180ms ease,
     border-color 180ms ease,
     background-color 180ms ease;
-}
-
-.game-status-tile:hover {
-  transform: translateY(-1px);
-  border-color: hsl(var(--primary) / 0.35);
-  background-color: hsl(var(--muted) / 0.46);
 }
 
 .game-status-phase-chip {
@@ -383,4 +511,116 @@
     hsl(var(--card)) 0%,
     hsl(0 80% 24% / 0.35) 100%
   );
+}
+
+.target-action-stage {
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.target-action-stage:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.8),
+    0 18px 36px -26px rgb(15 23 42 / 0.6);
+}
+
+.target-action-svg {
+  overflow: visible;
+}
+
+.target-action-figure,
+.target-action-shadow,
+.target-action-lines,
+.target-action-block {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.target-action-figure-jump {
+  animation: target-action-jump 1.45s ease-in-out infinite;
+}
+
+.target-action-shadow-jump {
+  animation: target-action-shadow-jump 1.45s ease-in-out infinite;
+}
+
+.target-action-lines-rise {
+  animation: target-action-rise-lines 1.45s ease-in-out infinite;
+}
+
+.target-action-figure-run {
+  animation: target-action-run-shift 0.95s linear infinite;
+}
+
+.target-action-shadow-run {
+  animation: target-action-shadow-breathe 0.95s linear infinite;
+}
+
+.target-action-lines-run {
+  animation: target-action-speed-lines 0.95s linear infinite;
+}
+
+.target-action-figure-crouch {
+  animation: target-action-crouch-bob 1.3s ease-in-out infinite;
+}
+
+.target-action-shadow-crouch {
+  animation: target-action-shadow-breathe 1.3s ease-in-out infinite;
+}
+
+.target-action-lines-crouch {
+  animation: target-action-crouch-lines 1.3s ease-in-out infinite;
+}
+
+.target-action-figure-push {
+  animation: target-action-push-thrust 1.35s cubic-bezier(0.3, 0.85, 0.3, 1)
+    infinite;
+}
+
+.target-action-shadow-push {
+  animation: target-action-shadow-breathe 1.35s ease-in-out infinite;
+}
+
+.target-action-lines-push {
+  animation: target-action-speed-lines 1.35s ease-in-out infinite;
+}
+
+.target-action-block {
+  animation: target-action-block-shift 1.35s cubic-bezier(0.3, 0.85, 0.3, 1)
+    infinite;
+}
+
+.target-action-figure-idle {
+  animation: target-action-idle 3s ease-in-out infinite;
+}
+
+.target-action-shadow-idle {
+  animation: target-action-shadow-breathe 3s ease-in-out infinite;
+}
+
+.game-target-action-fade-out {
+  animation: game-target-action-fade-out 180ms ease-out forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .game-target-action-fade-out {
+    animation: none;
+    opacity: 0;
+    transform: translateY(10px) scale(0.965);
+    filter: none;
+  }
+
+  .target-action-stage {
+    transition: none;
+  }
+
+  .target-action-figure,
+  .target-action-shadow,
+  .target-action-lines,
+  .target-action-block {
+    animation: none !important;
+  }
 }
