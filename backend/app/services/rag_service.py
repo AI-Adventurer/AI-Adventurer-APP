@@ -13,42 +13,44 @@ class RagChunk:
 _KNOWLEDGE_BASE: tuple[RagChunk, ...] = (
     RagChunk(
         id="output_style",
-        keywords=("輸出", "格式", "故事", "敘事", "llm", "回覆"),
+        keywords=("輸出", "格式", "故事", "敘事", "llm", "回覆", "繁體"),
         content=(
             "輸出規則: 只輸出可直接給玩家看的繁體中文敘事內容，"
             "避免條列、JSON、Markdown 與前後置解釋。"
         ),
     ),
     RagChunk(
-        id="chapter_1",
-        keywords=("chapter-1", "chapter1", "叢林", "開場"),
+        id="core_worldview",
+        keywords=("半導體", "夢境", "小廖", "晶圓", "課堂", "世界觀"),
         content=(
-            "章節1場景: 潮濕叢林探索。敘事重點是生存壓迫感、"
-            "尋找洞穴線索，結尾可用『就在這一刻...』收束。"
+            "世界觀一致性: 主角是上課睡著的小廖，夢見自己縮小進入半導體世界。"
+            "敘事要把冒險感與半導體知識點（電子、矽、摻雜、製程、記憶體、訊號）自然融合。"
         ),
     ),
     RagChunk(
-        id="chapter_2",
-        keywords=("chapter-2", "chapter2", "河流", "木橋"),
+        id="chapter_1_style",
+        keywords=("chapter-1", "chapter1", "第一章", "1-", "loop 1", "loop 10"),
         content=(
-            "章節2場景: 河流木橋。敘事重點是濕滑橋面與失足風險，"
-            "維持前進張力與臨場危機。"
+            "第一章風格: 晶圓工廠與能帶概念的探索感。"
+            "可描寫銀白色紋路、製程光影、前往核心區的路，"
+            "並維持『就在這一刻...』的節奏收束。"
         ),
     ),
     RagChunk(
-        id="chapter_3",
-        keywords=("chapter-3", "chapter3", "洞穴", "追逐"),
+        id="chapter_2_style",
+        keywords=("chapter-2", "chapter2", "第二章", "2-", "loop 11", "loop 20"),
         content=(
-            "章節3場景: 洞穴追逐。敘事重點是回音、壓迫、"
-            "被追逐的不確定感，節奏可更急促。"
+            "第二章風格: 記憶體核心與資料脈衝的高速壓迫感。"
+            "可描寫位元平台、訊號穩定、雜訊干擾與出口考驗，"
+            "逐步推進到夢境結束前的收束感。"
         ),
     ),
     RagChunk(
-        id="action_map",
-        keywords=("crouch", "jump", "run_forward", "push", "動作", "目標動作"),
+        id="loop_pacing",
+        keywords=("loop", "20", "進度", "1-1", "2-10", "段落"),
         content=(
-            "動作語意: crouch=下蹲, jump=跳躍, run_forward=向前跑, push=推開。"
-            "描述事件時，請維持動作語意一致。"
+            "進度節奏: 全程共 20 段劇情，前 10 段偏製程與基礎概念，"
+            "後 10 段偏記憶體與訊號。每段應有微小推進，不可重複同一句型。"
         ),
     ),
     RagChunk(

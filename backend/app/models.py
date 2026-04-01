@@ -42,10 +42,15 @@ class PlayerState:
 @dataclass
 class GameState:
     chapter_id: str = "chapter-1"
+    story_count: int = 0
     event_id: str | None = None
     target_action: str | None = None
     time_remaining_ms: int = 0
     judge_result: str = "pending"
+    is_game_over: bool = False
+    ending_type: str | None = None
+    ending_title: str | None = None
+    ending_story: str | None = None
     player_state: PlayerState = field(default_factory=PlayerState)
     story_segment: str = "Ready for adventure."
 

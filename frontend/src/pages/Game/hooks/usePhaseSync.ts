@@ -26,6 +26,13 @@ export function usePhaseSync({
   }, [narrativePhaseKey, zeroLockedPhaseKey]);
 
   useEffect(() => {
+    // 同一 phase 若剩餘時間回升，代表先前 0 鎖定是暫態誤判，解除鎖定。
+    if (zeroLockedPhaseKey === narrativePhaseKey && localRemainingMs > 300) {
+      setZeroLockedPhaseKey(null);
+    }
+  }, [localRemainingMs, narrativePhaseKey, zeroLockedPhaseKey]);
+
+  useEffect(() => {
     if (localRemainingMs <= 0 && zeroLockedPhaseKey !== narrativePhaseKey) {
       setZeroLockedPhaseKey(narrativePhaseKey);
     }

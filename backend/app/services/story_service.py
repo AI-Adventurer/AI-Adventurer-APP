@@ -53,6 +53,7 @@ def generate(
     store.set_story(story)
     if sync_to_game_view:
         state.story_segment = story.story_segment
+        state.story_count += 1
     return story
 
 

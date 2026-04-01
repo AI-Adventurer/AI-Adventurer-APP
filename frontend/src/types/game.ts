@@ -7,10 +7,15 @@ export interface PlayerState {
 
 export interface GameState {
   chapter_id: string;
+  story_count: number;
   event_id: string | null;
   target_action: string | null;
   time_remaining_ms: number;
   judge_result: JudgeResult;
+  is_game_over: boolean;
+  ending_type: 'good' | 'bad' | null;
+  ending_title: string | null;
+  ending_story: string | null;
   player_state: PlayerState;
   story_segment: string;
 }

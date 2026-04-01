@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 
@@ -5,61 +6,33 @@ type GameStatusCardProps = {
   hpRaw?: number;
   score?: number;
   chapterId?: string | number;
+  storyCount?: number;
   displayRemainingMs: number;
   isEventActive: boolean;
   isEventResolved: boolean;
   eventTimeLimitMs?: number;
+  isReadingGuard?: boolean;
 };
 
-const CHINESE_DIGITS = [
-  '零',
-  '一',
-  '二',
-  '三',
-  '四',
-  '五',
-  '六',
-  '七',
-  '八',
-  '九',
-] as const;
+function formatChapterLabel(
+  chapterId: string | number | undefined,
+  storyCount?: number
+) {
+  const normalizedStoryCount =
+    typeof storyCount === 'number' && Number.isFinite(storyCount)
+      ? Math.max(1, Math.floor(storyCount))
+      : null;
 
-function toChineseNumber(value: number): string {
-  if (!Number.isInteger(value) || value <= 0) {
-    return '';
+  // 進度顯示以累積劇情數為主：1-1 ~ 1-10, 2-1 ~ 2-10
+  if (normalizedStoryCount !== null) {
+    const chapterFromProgress = Math.min(
+      2,
+      Math.floor((normalizedStoryCount - 1) / 10) + 1
+    );
+    const segmentFromProgress = ((normalizedStoryCount - 1) % 10) + 1;
+    return `${chapterFromProgress}-${segmentFromProgress}`;
   }
 
-  if (value < 10) {
-    return CHINESE_DIGITS[value];
-  }
-
-  if (value < 100) {
-    const tens = Math.floor(value / 10);
-    const ones = value % 10;
-    const tensText = tens === 1 ? '十' : `${CHINESE_DIGITS[tens]}十`;
-    return ones === 0 ? tensText : `${tensText}${CHINESE_DIGITS[ones]}`;
-  }
-
-  if (value < 1000) {
-    const hundreds = Math.floor(value / 100);
-    const remainder = value % 100;
-    const hundredsText = `${CHINESE_DIGITS[hundreds]}百`;
-
-    if (remainder === 0) {
-      return hundredsText;
-    }
-
-    if (remainder < 10) {
-      return `${hundredsText}零${CHINESE_DIGITS[remainder]}`;
-    }
-
-    return `${hundredsText}${toChineseNumber(remainder)}`;
-  }
-
-  return String(value);
-}
-
-function formatChapterLabel(chapterId: string | number | undefined) {
   if (chapterId === undefined || chapterId === null || chapterId === '') {
     return '-';
   }
@@ -75,28 +48,33 @@ function formatChapterLabel(chapterId: string | number | undefined) {
   }
 
   const chapterNumber = Number.parseInt(numericPart, 10);
-  const chineseNumber = toChineseNumber(chapterNumber);
-
-  if (!chineseNumber) {
+  if (!Number.isFinite(chapterNumber) || chapterNumber <= 0) {
     return rawValue;
   }
 
-  return `第${chineseNumber}章`;
+  return `${chapterNumber}-1`;
 }
 
 export default function GameStatusCard({
   hpRaw,
   score,
   chapterId,
+  storyCount,
   displayRemainingMs,
   isEventActive,
   isEventResolved,
   eventTimeLimitMs,
+  isReadingGuard = false,
 }: GameStatusCardProps) {
+  const previousScoreRef = useRef<number | null>(null);
+  const scoreDeltaHideTimerRef = useRef<number | null>(null);
+  const [scoreDelta, setScoreDelta] = useState<number | null>(null);
+  const [scoreDeltaAnimKey, setScoreDeltaAnimKey] = useState(0);
+
   const maxHp = 5;
   const currentHp = Math.max(0, Math.min(maxHp, hpRaw ?? 0));
   const displayScore = score === undefined ? '-' : Math.max(0, score);
-  const displayChapter = formatChapterLabel(chapterId);
+  const displayChapter = formatChapterLabel(chapterId, storyCount);
   const hpPercent = (currentHp / maxHp) * 100;
   const phaseTotalMs = isEventActive
     ? (eventTimeLimitMs ?? 10000)
@@ -114,7 +92,48 @@ export default function GameStatusCard({
 
   const timeLeftSecondsValue = Math.max(0, displayRemainingMs / 1000);
   const timeLeftSecondsDisplay = timeLeftSecondsValue.toFixed(1);
-  const isEventDangerTime = isEventActive && timeLeftSecondsValue <= 3;
+  const isEventDangerTime =
+    isEventActive && !isReadingGuard && timeLeftSecondsValue <= 3;
+
+  useEffect(() => {
+    const nextScore = typeof score === 'number' ? Math.max(0, score) : null;
+    if (nextScore === null) {
+      return;
+    }
+
+    const previousScore = previousScoreRef.current;
+    previousScoreRef.current = nextScore;
+
+    if (previousScore === null) {
+      return;
+    }
+
+    const delta = nextScore - previousScore;
+    if (delta === 0) {
+      return;
+    }
+
+    setScoreDelta(delta);
+    setScoreDeltaAnimKey((value) => value + 1);
+
+    if (scoreDeltaHideTimerRef.current !== null) {
+      window.clearTimeout(scoreDeltaHideTimerRef.current);
+    }
+
+    scoreDeltaHideTimerRef.current = window.setTimeout(() => {
+      setScoreDelta(null);
+      scoreDeltaHideTimerRef.current = null;
+    }, 900);
+  }, [score]);
+
+  useEffect(
+    () => () => {
+      if (scoreDeltaHideTimerRef.current !== null) {
+        window.clearTimeout(scoreDeltaHideTimerRef.current);
+      }
+    },
+    []
+  );
 
   return (
     <Card className="game-status-card relative overflow-hidden">
@@ -141,10 +160,26 @@ export default function GameStatusCard({
           </div>
           <div className="game-status-tile rounded-lg border border-border/60 bg-muted/30 p-3">
             <p className="text-[11px] text-muted-foreground">分數</p>
-            <p className="text-lg font-semibold tabular-nums">{displayScore}</p>
+            <div className="relative inline-flex items-center gap-2">
+              <p className="text-lg font-semibold tabular-nums">
+                {displayScore}
+              </p>
+              {scoreDelta !== null ? (
+                <span
+                  key={scoreDeltaAnimKey}
+                  className={`game-score-delta ${
+                    scoreDelta > 0
+                      ? 'game-score-delta-positive'
+                      : 'game-score-delta-negative'
+                  }`}
+                >
+                  {scoreDelta > 0 ? `+${scoreDelta}` : `${scoreDelta}`}
+                </span>
+              ) : null}
+            </div>
           </div>
           <div className="game-status-tile rounded-lg border border-border/60 bg-muted/30 p-3">
-            <p className="text-[11px] text-muted-foreground">章節</p>
+            <p className="text-[11px] text-muted-foreground">進度</p>
             <p className="text-lg font-semibold">{displayChapter}</p>
           </div>
         </div>

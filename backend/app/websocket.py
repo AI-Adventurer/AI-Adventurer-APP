@@ -1,6 +1,5 @@
 """WebSocket 配置和事件處理"""
 from app.services.edge_service import edge_service
-from app.services import event_service
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -24,6 +23,17 @@ def init_websocket(app):
         ping_interval=25,
     )
 
+    def emit_game_event(payload: dict):
+        socketio.emit(
+            "event_result",
+            payload,
+            namespace="/ws/game",
+            broadcast=True,
+            include_self=False,
+        )
+
+    edge_service.set_action_success_handler(emit_game_event)
+
     # WebSocket 事件處理器
     
     @socketio.on("connect", namespace="/edge/frames")
@@ -46,21 +56,6 @@ def init_websocket(app):
                 emit("response", result)
                 logger.warning("Rejected edge frame payload: %s", result)
                 return
-
-            observed_action = str(data.get("stable_action", "")).strip()
-            confidence_raw = data.get("confidence", None)
-            try:
-                confidence = (
-                    float(confidence_raw) if confidence_raw is not None else None
-                )
-            except (TypeError, ValueError):
-                confidence = None
-
-            # 將 Edge 動作即時反饋到遊戲邏輯（若符合當前事件則立即判定成功）。
-            event_service.apply_observed_action(
-                observed_action=observed_action,
-                confidence=confidence,
-            )
 
             pose_data = data.get("pose") if isinstance(data, dict) else None
             pose_points = (
@@ -89,6 +84,7 @@ def init_websocket(app):
                     "timestamp": float(data.get("timestamp", 0.0)),
                     "stable_action": str(data.get("stable_action", "")),
                     "confidence": float(data.get("confidence", 0.0)),
+                    "action_scores": data.get("action_scores", {}),
                     "latest_pose": pose_points,
                 },
                 namespace="/edge/frames",
@@ -98,6 +94,15 @@ def init_websocket(app):
             
         except Exception as e:
             logger.error(f"Error handling frame: {e}")
+
+    @socketio.on("connect", namespace="/ws/game")
+    def handle_game_connect():
+        logger.info("Client connected to /ws/game")
+        emit("response", {"data": "Connected to game updates"})
+
+    @socketio.on("disconnect", namespace="/ws/game")
+    def handle_game_disconnect():
+        logger.info("Client disconnected from /ws/game")
 
     @socketio.on("connect", namespace="/edge/video")
     def handle_video_connect():

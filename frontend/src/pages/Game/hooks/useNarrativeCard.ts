@@ -38,8 +38,43 @@ export function useNarrativeCard(input: UseNarrativeCardInput) {
   const [cardAnimClass, setCardAnimClass] = useState('game-card-enter-right');
   const [, startTransition] = useTransition();
 
+  const parseEventPhaseKey = (phaseKey: string) => {
+    if (!phaseKey.startsWith('event-')) {
+      return null;
+    }
+
+    const [, ...rest] = phaseKey.split('-');
+    if (rest.length < 2) {
+      return null;
+    }
+
+    const judge = rest.pop() ?? '';
+    const eventId = rest.join('-');
+    return { eventId, judge };
+  };
+
   useEffect(() => {
     if (input.phaseKey === renderedNarrative.key) {
+      return;
+    }
+
+    const prevEvent = parseEventPhaseKey(renderedNarrative.key);
+    const nextEvent = parseEventPhaseKey(input.phaseKey);
+    const isSameEventResolutionChange =
+      prevEvent &&
+      nextEvent &&
+      prevEvent.eventId === nextEvent.eventId &&
+      prevEvent.judge !== nextEvent.judge;
+
+    // 同一事件從 pending 變 success/fail 時，直接更新內容避免先退出造成延遲感。
+    if (isSameEventResolutionChange) {
+      setRenderedNarrative({
+        key: input.phaseKey,
+        title,
+        text,
+        targetAction,
+      });
+      setCardAnimClass('game-card-enter-right');
       return;
     }
 

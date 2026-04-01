@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from app.models import EventRecord, GameState
 
-JUNGLE_EVENTS: list[dict[str, Any]] = [
+EVENTS: list[dict[str, Any]] = [
     # Chapter 1: 晶圓與製程教室夢境
     {
         "id": "event_energy_barrier",
@@ -112,11 +112,13 @@ def resolve_chapter(chapter_id: str | None) -> int:
 class GameEngine:
     """Domain rules for event judging, scoring, hp, and chapter switching."""
 
+    EVENT_READ_GRACE_MS = 5000
+
     def pick_event(self, chapter_id: str | None) -> dict[str, Any]:
         chapter = resolve_chapter(chapter_id)
-        candidates = [item for item in JUNGLE_EVENTS if int(item["chapter"]) == chapter]
+        candidates = [item for item in EVENTS if int(item["chapter"]) == chapter]
         if not candidates:
-            candidates = [item for item in JUNGLE_EVENTS if int(item["chapter"]) == 1]
+            candidates = [item for item in EVENTS if int(item["chapter"]) == 1]
         return dict(choice(candidates))
 
     def create_event_record(self, chapter_id: str | None, event_def: dict[str, Any]) -> EventRecord:
@@ -136,7 +138,8 @@ class GameEngine:
         if event is None or event.status != "active":
             return 0
         elapsed_ms = int((time() - event.created_at) * 1000)
-        return max(0, event.time_limit_ms - elapsed_ms)
+        effective_elapsed_ms = max(0, elapsed_ms - self.EVENT_READ_GRACE_MS)
+        return max(0, event.time_limit_ms - effective_elapsed_ms)
 
     def judge_event_result(
         self,
@@ -145,11 +148,22 @@ class GameEngine:
         confidence: float | None = None,
         min_confidence: float = 0.55,
     ) -> str:
+        elapsed_ms = int((time() - event.created_at) * 1000)
+        if elapsed_ms < self.EVENT_READ_GRACE_MS:
+            return "pending"
+
         if not observed_action:
             return "pending"
+        normalized_observed = observed_action.strip().lower()
+        normalized_target = event.target_action.strip().lower()
+
+        # 只要偵測到正確動作就直接判定成功。
+        if normalized_observed == normalized_target:
+            return "success"
+
         if confidence is not None and confidence < min_confidence:
             return "pending"
-        return "success" if observed_action == event.target_action else "pending"
+        return "pending"
 
     def apply_result_effect(self, state: GameState, result: str) -> None:
         if result == "success":

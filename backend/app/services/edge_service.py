@@ -1,6 +1,6 @@
 """Edge 設備管理服務 (Jetson Nano)"""
 from time import time
-from typing import Any
+from typing import Any, Callable
 
 from app.models import JetsonDevice, JetsonFrame, PosePoints, SkeletonSequence
 from app.utils.logger import get_logger
@@ -14,6 +14,13 @@ class EdgeService:
     def __init__(self):
         self._devices: dict[str, JetsonDevice] = {}
         self._latest_frames: dict[str, JetsonFrame] = {}
+        self._action_success_handler: Callable[[dict[str, Any]], None] | None = None
+
+    def set_action_success_handler(
+        self,
+        handler: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        self._action_success_handler = handler
 
     def register_device(self, source: str) -> JetsonDevice:
         """註冊新設備"""
@@ -183,6 +190,32 @@ class EdgeService:
 
             # 儲存最新幀
             self._latest_frames[frame.source] = frame
+
+            # 只要偵測到當前事件需要的正確動作，就立即判定成功。
+            from app.services import event_service
+
+            action_resolved = event_service.apply_observed_action(
+                observed_action=frame.stable_action,
+                confidence=frame.confidence,
+            )
+
+            if action_resolved and self._action_success_handler:
+                from app.services.state_store import store
+
+                state = store.get_game_state()
+                current = store.get_current_event()
+                self._action_success_handler(
+                    {
+                        "type": "event_result",
+                        "result": "success",
+                        "event_id": state.event_id,
+                        "target_action": state.target_action,
+                        "observed_action": frame.stable_action,
+                        "confidence": frame.confidence,
+                        "source": frame.source,
+                        "resolved_at": current.resolved_at if current else time(),
+                    }
+                )
 
             logger.debug(
                 f"Frame ingested: source={frame.source}, "

@@ -10,6 +10,8 @@ type NarrativeCardProps = {
   cardAnimClass: string;
   judgeResult?: string | null;
   isWaitingStory?: boolean;
+  isReadingGuard?: boolean;
+  readingGuardRemainingMs?: number;
 };
 
 function NarrativeCardContent({
@@ -17,16 +19,20 @@ function NarrativeCardContent({
   cardAnimClass,
   judgeResult,
   isWaitingStory = false,
+  isReadingGuard = false,
+  readingGuardRemainingMs = 0,
 }: NarrativeCardProps) {
   const targetActionLabel = toActionLabelZh(narrative.targetAction);
   const isResolved = judgeResult === 'success' || judgeResult === 'fail';
   const shouldFadeTargetAction = isResolved && Boolean(targetActionLabel);
-  const shouldShowStoryLoading =
-    isWaitingStory && narrative.title === '劇情';
+  const shouldShowStoryLoading = isWaitingStory && narrative.title === '劇情';
+  const shouldShowReadingGuard =
+    isReadingGuard && narrative.title === '事件' && judgeResult === 'pending';
+  const readingGuardSeconds = (readingGuardRemainingMs / 1000).toFixed(1);
 
   const cardOutcomeClass =
     judgeResult === 'success'
-      ? 'game-card-success'
+      ? 'game-card-success game-card-success-instant'
       : judgeResult === 'fail'
         ? 'game-card-fail'
         : '';
@@ -34,7 +40,17 @@ function NarrativeCardContent({
   return (
     <Card className={`${cardAnimClass} ${cardOutcomeClass}`}>
       <CardHeader className="pb-3">
-        <CardTitle>{narrative.title}卡</CardTitle>
+        <CardTitle className="flex items-center justify-between gap-2">
+          <span className="inline-flex h-5 items-center">
+            {narrative.title}卡
+          </span>
+          {shouldShowReadingGuard ? (
+            <span className="inline-flex h-5 items-center gap-1 rounded-full border border-amber-400/50 bg-amber-500/12 px-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+              閱讀中 {readingGuardSeconds}s
+            </span>
+          ) : null}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {shouldShowStoryLoading ? (
@@ -58,7 +74,7 @@ function NarrativeCardContent({
               }`}
             >
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_20%,hsl(var(--primary)/0.22),transparent_45%)]" />
-              <div className="relative mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px] md:items-center">
+              <div className="relative grid gap-3 md:grid-cols-[minmax(0,1fr)_220px] md:items-center">
                 <div className="space-y-1">
                   <p className="text-2xl text-center font-extrabold tracking-wide text-primary drop-shadow-[0_2px_10px_hsl(var(--primary)/0.4)]">
                     {targetActionLabel}
@@ -93,7 +109,9 @@ const MemoizedNarrativeCard = React.memo(
       prevProps.narrative.title === nextProps.narrative.title &&
       prevProps.narrative.targetAction === nextProps.narrative.targetAction &&
       prevProps.judgeResult === nextProps.judgeResult &&
-      prevProps.isWaitingStory === nextProps.isWaitingStory
+      prevProps.isWaitingStory === nextProps.isWaitingStory &&
+      prevProps.isReadingGuard === nextProps.isReadingGuard &&
+      prevProps.readingGuardRemainingMs === nextProps.readingGuardRemainingMs
     );
   }
 );

@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import BackHomeButton from '@/components/common/BackHomeButton';
+import { Button } from '@/components/ui/button';
+import { useStartGame } from '@/hooks/mutations/useStartGame';
 import { useCurrentEvent } from '@/hooks/queries/useCurrentEvent';
 import { useCurrentStory } from '@/hooks/queries/useCurrentStory';
 import { useGameState } from '@/hooks/queries/useGameState';
@@ -14,13 +17,21 @@ import {
   drawPoseOverlay,
   FRAME_NAMESPACE,
   FRONTEND_SOURCE,
+  GAME_NAMESPACE,
   getEdgeBaseUrl,
   isPosePointArray,
   type PosePoint,
   VIDEO_NAMESPACE,
 } from './lib/stream';
 
+type ActionPrediction = {
+  action: string;
+  confidence: number;
+};
+
 export default function Game() {
+  const navigate = useNavigate();
+  const startGameMutation = useStartGame();
   const gameStateQuery = useGameState();
   const currentEventQuery = useCurrentEvent();
   const currentStoryQuery = useCurrentStory();
@@ -39,6 +50,10 @@ export default function Game() {
   const lastPoseUpdateTimeRef = useRef<number>(0);
   const overlayFrameRef = useRef<number | null>(null);
   const scheduleOverlayDrawRef = useRef<() => void>(() => {});
+  const actionSignatureRef = useRef('');
+  const lastImmediateSuccessSyncAtRef = useRef(0);
+  const targetActionRef = useRef<string | null>(null);
+  const judgeResultRef = useRef<string | null>(null);
   const previewErrorToastRef = useRef<string | null>(null);
   const poseErrorToastRef = useRef<string | null>(null);
   const [previewStatus, setPreviewStatus] = useState(
@@ -49,10 +64,125 @@ export default function Game() {
   const [poseError, setPoseError] = useState<string | null>(null);
   const [poseDataStale, setPoseDataStale] = useState(true);
   const [isRefreshingStream, setIsRefreshingStream] = useState(false);
+  const [showEndingTransition, setShowEndingTransition] = useState(false);
+  const [topActionPredictions, setTopActionPredictions] = useState<
+    ActionPrediction[]
+  >([]);
 
   const gameState = gameStateQuery.data?.data;
   const currentEvent = currentEventQuery.data?.data;
   const currentStory = currentStoryQuery.data?.data;
+
+  useEffect(() => {
+    targetActionRef.current = gameState?.target_action ?? null;
+    judgeResultRef.current = gameState?.judge_result ?? null;
+  }, [gameState?.target_action, gameState?.judge_result]);
+
+  const normalizeConfidence = (value: unknown) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) {
+      return null;
+    }
+
+    if (value <= 1) {
+      return Math.max(0, value);
+    }
+
+    if (value <= 100) {
+      return value / 100;
+    }
+
+    return 1;
+  };
+
+  const toTopActionPredictions = (
+    actionScores: unknown,
+    stableAction: unknown,
+    confidenceValue: unknown
+  ) => {
+    const normalizedFromScores =
+      actionScores && typeof actionScores === 'object'
+        ? Object.entries(actionScores as Record<string, unknown>)
+            .map(([action, score]) => {
+              const normalized = normalizeConfidence(score);
+              return normalized === null
+                ? null
+                : {
+                    action,
+                    confidence: normalized,
+                  };
+            })
+            .filter((item): item is ActionPrediction => Boolean(item))
+            .sort((a, b) => b.confidence - a.confidence)
+            .slice(0, 3)
+        : [];
+
+    if (normalizedFromScores.length > 0) {
+      return normalizedFromScores;
+    }
+
+    const fallbackAction =
+      typeof stableAction === 'string' ? stableAction.trim() : '';
+    const fallbackConfidence = normalizeConfidence(confidenceValue);
+    if (!fallbackAction || fallbackConfidence === null) {
+      return [];
+    }
+
+    return [
+      {
+        action: fallbackAction,
+        confidence: fallbackConfidence,
+      },
+    ];
+  };
+
+  const applyActionPredictions = (
+    actionScores: unknown,
+    stableAction: unknown,
+    confidenceValue: unknown
+  ) => {
+    const nextTop = toTopActionPredictions(
+      actionScores,
+      stableAction,
+      confidenceValue
+    );
+
+    const signature = nextTop
+      .map((item) => `${item.action}:${item.confidence.toFixed(3)}`)
+      .join('|');
+
+    if (signature === actionSignatureRef.current) {
+      return;
+    }
+
+    actionSignatureRef.current = signature;
+    setTopActionPredictions(nextTop);
+  };
+
+  const tryImmediateSuccessSync = (observedAction: unknown) => {
+    if (judgeResultRef.current && judgeResultRef.current !== 'pending') {
+      return;
+    }
+
+    const target = targetActionRef.current?.trim().toLowerCase();
+    const observed =
+      typeof observedAction === 'string'
+        ? observedAction.trim().toLowerCase()
+        : '';
+
+    if (!target || !observed || observed !== target) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastImmediateSuccessSyncAtRef.current < 250) {
+      return;
+    }
+
+    lastImmediateSuccessSyncAtRef.current = now;
+    void gameStateQuery.refetch();
+    void currentEventQuery.refetch();
+  };
+
   const hasStorySegment = Boolean(currentStory?.story_segment?.trim());
   const syncAtPhaseBoundary = useCallback(() => {
     const run = async () => {
@@ -82,10 +212,41 @@ export default function Game() {
     currentStory,
     isStoryLoading: Boolean(
       currentStoryQuery.isPending ||
-        (currentStoryQuery.isFetching && !hasStorySegment)
+      (currentStoryQuery.isFetching && !hasStorySegment)
     ),
     onBoundarySync: syncAtPhaseBoundary,
   });
+
+  const isGameOver = Boolean(gameState?.is_game_over);
+  const endingTitle = gameState?.ending_title?.trim() || '結局';
+  const endingStory =
+    gameState?.ending_story?.trim() ||
+    gameState?.story_segment?.trim() ||
+    '冒險告一段落。';
+
+  const handleRestartGame = () => {
+    startGameMutation.mutate(undefined, {
+      onSuccess: () => {
+        setShowEndingTransition(false);
+        void gameStateQuery.refetch();
+        void currentEventQuery.refetch();
+        void currentStoryQuery.refetch();
+      },
+    });
+  };
+
+  const handleBackToHome = () => {
+    void navigate('/');
+  };
+
+  useEffect(() => {
+    if (!isGameOver) {
+      setShowEndingTransition(false);
+      return;
+    }
+
+    setShowEndingTransition(true);
+  }, [isGameOver, endingTitle]);
 
   const handleRefreshStreamStatus = () => {
     const edgeSource = activeVideoSourceRef.current ?? poseSourceRef.current;
@@ -182,10 +343,18 @@ export default function Game() {
               frame?: {
                 latest_pose?: number[][];
                 source?: string;
+                stable_action?: string;
+                confidence?: number;
+                action_scores?: Record<string, number>;
               };
             };
           };
           const frame = payload?.data?.frame;
+          applyActionPredictions(
+            frame?.action_scores,
+            frame?.stable_action,
+            frame?.confidence
+          );
           const synced = applyPose(frame?.source ?? source, frame?.latest_pose);
           if (!synced && !aborted) {
             setPoseStatus(`已鎖定來源 ${source}，等待骨架資料...`);
@@ -200,6 +369,9 @@ export default function Game() {
               {
                 latest_pose?: number[][];
                 source?: string;
+                stable_action?: string;
+                confidence?: number;
+                action_scores?: Record<string, number>;
               }
             >;
           };
@@ -216,6 +388,11 @@ export default function Game() {
         const activeSource = activeVideoSourceRef.current?.trim();
         if (activeSource) {
           const activeFrame = frames[activeSource];
+          applyActionPredictions(
+            activeFrame?.action_scores,
+            activeFrame?.stable_action,
+            activeFrame?.confidence
+          );
           if (
             applyPose(
               activeFrame?.source ?? activeSource,
@@ -227,6 +404,11 @@ export default function Game() {
         }
 
         const [firstSource, firstFrame] = Object.entries(frames)[0] ?? [];
+        applyActionPredictions(
+          firstFrame?.action_scores,
+          firstFrame?.stable_action,
+          firstFrame?.confidence
+        );
         if (
           !applyPose(
             firstFrame?.source ?? firstSource,
@@ -286,7 +468,13 @@ export default function Game() {
 
     frameSocket.on(
       'frame_broadcast',
-      (payload: { source?: string; latest_pose?: unknown }) => {
+      (payload: {
+        source?: string;
+        latest_pose?: unknown;
+        stable_action?: string;
+        confidence?: number;
+        action_scores?: Record<string, number>;
+      }) => {
         const source = payload?.source?.trim();
         if (!source) {
           return;
@@ -302,6 +490,12 @@ export default function Game() {
         ) {
           return;
         }
+        applyActionPredictions(
+          payload?.action_scores,
+          payload?.stable_action,
+          payload?.confidence
+        );
+        tryImmediateSuccessSync(payload?.stable_action);
         applyPose(source, payload?.latest_pose);
       }
     );
@@ -393,6 +587,33 @@ export default function Game() {
       window.removeEventListener('resize', scheduleOverlayRefresh);
     };
   }, []);
+
+  useEffect(() => {
+    const edgeBaseUrl = getEdgeBaseUrl();
+    const gameSocket = io(`${edgeBaseUrl}${GAME_NAMESPACE}`, {
+      transports: ['websocket', 'polling'],
+      timeout: 10000,
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+
+    gameSocket.on(
+      'event_result',
+      (payload: { result?: string; event_id?: string | null }) => {
+        if (payload?.result !== 'success') {
+          return;
+        }
+
+        void gameStateQuery.refetch();
+        void currentEventQuery.refetch();
+      }
+    );
+
+    return () => {
+      gameSocket.disconnect();
+    };
+  }, [gameStateQuery, currentEventQuery]);
 
   useEffect(() => {
     const edgeBaseUrl = getEdgeBaseUrl();
@@ -616,6 +837,46 @@ export default function Game() {
     };
   }, []);
 
+  if (isGameOver) {
+    return (
+      <section className="game-ending-screen relative min-h-[78vh] overflow-hidden rounded-2xl border border-border/60 p-6 sm:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_22%,hsl(var(--primary)/0.2),transparent_42%),radial-gradient(circle_at_84%_84%,hsl(var(--primary)/0.14),transparent_46%)]" />
+        <div
+          className={`relative mx-auto flex max-w-3xl flex-col items-center gap-6 text-center ${
+            showEndingTransition
+              ? 'game-ending-transition-in game-ending-panel-in'
+              : ''
+          }`}
+        >
+          <h1 className="text-3xl font-extrabold tracking-wide sm:text-4xl">
+            {endingTitle}
+          </h1>
+          <p className="w-full whitespace-pre-line rounded-xl border border-border/70 bg-background/70 p-5 text-left text-[15px] leading-8 shadow-sm">
+            {endingStory}
+          </p>
+          <div className="mt-2 flex w-full max-w-md flex-col gap-3 sm:flex-row">
+            <Button
+              className="flex-1"
+              size="lg"
+              onClick={handleRestartGame}
+              disabled={startGameMutation.isPending}
+            >
+              {startGameMutation.isPending ? '重新開始中...' : '重新開始'}
+            </Button>
+            <Button
+              className="flex-1"
+              size="lg"
+              variant="outline"
+              onClick={handleBackToHome}
+            >
+              返回標題
+            </Button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-5 pb-8">
       <BackHomeButton />
@@ -623,6 +884,7 @@ export default function Game() {
         <VideoStreamCard
           videoRef={videoRef}
           skeletonCanvasRef={skeletonCanvasRef}
+          topActionPredictions={topActionPredictions}
           previewStatus={previewStatus}
           previewError={previewError}
           poseStatus={poseStatus}

@@ -1,4 +1,5 @@
 export const ACTION_LABELS_ZH: Record<string, string> = {
+  stand: '站立',
   crouch: '下蹲',
   jump: '跳躍',
   run_forward: '向前跑',

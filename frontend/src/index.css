@@ -168,6 +168,21 @@
   }
 }
 
+@keyframes game-card-success-instant {
+  0% {
+    border-color: hsl(142 78% 40% / 0.95);
+    box-shadow:
+      0 0 0 0 hsl(142 78% 40% / 0.55),
+      inset 0 0 0 999px hsl(142 78% 40% / 0.22);
+  }
+  100% {
+    border-color: hsl(142 65% 38% / 0.55);
+    box-shadow:
+      0 0 0 0 hsl(142 78% 40% / 0),
+      inset 0 0 0 999px hsl(142 78% 40% / 0);
+  }
+}
+
 @keyframes game-card-fail-shake {
   0%,
   100% {
@@ -261,6 +276,49 @@
   }
   50% {
     box-shadow: 0 0 0.75rem hsl(var(--primary) / 0.18);
+  }
+}
+
+@keyframes game-score-delta-float {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(-9px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.96);
+  }
+}
+
+@keyframes game-ending-transition-in {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+    transform: scale(1.015);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+}
+
+@keyframes game-ending-panel-in {
+  0% {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -424,6 +482,12 @@
   animation: game-card-success 420ms ease-out;
 }
 
+.game-card-success-instant {
+  animation:
+    game-card-success-instant 280ms ease-out,
+    game-card-success 420ms ease-out;
+}
+
 .stream-status-connecting {
   animation: status-pulse 1.5s ease-in-out infinite;
 }
@@ -483,6 +547,56 @@
 
 .game-status-progress {
   animation: game-status-progress-glow 2.4s ease-in-out infinite;
+}
+
+.game-score-delta {
+  display: inline-flex;
+  min-width: 2.1rem;
+  justify-content: center;
+  border-radius: 9999px;
+  padding: 0.12rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  animation: game-score-delta-float 900ms ease-out forwards;
+  will-change: transform, opacity;
+}
+
+.game-score-delta-positive {
+  color: hsl(142 73% 26%);
+  background: hsl(142 70% 45% / 0.22);
+}
+
+.game-score-delta-negative {
+  color: hsl(0 72% 37%);
+  background: hsl(0 85% 58% / 0.2);
+}
+
+.game-ending-screen {
+  background: linear-gradient(
+    160deg,
+    hsl(var(--card)) 0%,
+    hsl(var(--muted) / 0.55) 100%
+  );
+}
+
+.game-ending-transition-in {
+  animation: game-ending-transition-in 560ms cubic-bezier(0.2, 0.75, 0.2, 1)
+    forwards;
+}
+
+.game-ending-panel-in {
+  animation: game-ending-panel-in 520ms cubic-bezier(0.2, 0.75, 0.2, 1) forwards;
+}
+
+.dark .game-score-delta-positive {
+  color: hsl(142 72% 76%);
+  background: hsl(142 70% 45% / 0.24);
+}
+
+.dark .game-score-delta-negative {
+  color: hsl(0 90% 82%);
+  background: hsl(0 85% 58% / 0.28);
 }
 
 .dark .game-card-success {

@@ -2,6 +2,7 @@ import { API_BASE_URL } from '@/lib/apiClient';
 
 export const FRAME_NAMESPACE = '/edge/frames';
 export const VIDEO_NAMESPACE = '/edge/video';
+export const GAME_NAMESPACE = '/ws/game';
 export const FRONTEND_SOURCE = 'frontend-preview';
 
 const POSE_CONNECTIONS: Array<[number, number]> = [
