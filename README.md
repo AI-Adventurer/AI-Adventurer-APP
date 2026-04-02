@@ -110,6 +110,7 @@ AI-Adventurer/
 | 變數                | 說明              | 預設值                  |
 | ------------------- | ----------------- | ----------------------- |
 | `VITE_API_BASE_URL` | 前端 API 基底網址 | `http://localhost:8000` |
+| `VITE_SOCKET_BASE_URL` | 前端 Socket.IO / Edge 基底網址 | 空字串，預設沿用 API host |
 
 ### Backend
 
@@ -123,3 +124,16 @@ AI-Adventurer/
 | `LLM_MODEL`        | 敘事模型名稱（預留）     | `gpt-4.1-mini`                                |
 | `LOG_LEVEL`        | 日誌等級                 | `INFO`                                        |
 | `CORS_ORIGINS`     | 允許前端來源（逗號分隔） | `http://localhost:5173,http://127.0.0.1:5173` |
+
+## 7. Jetson / Edge 整合
+
+如果你的 Jetson `AI_Adventure_Edge` 會把動作辨識結果送進這個 APP：
+
+- Jetson frame ingest 請對接後端的 `/edge/frames`
+- Jetson WebRTC signaling 請對接後端的 `/edge/video`
+- 前端遊戲頁會從 `/edge/frames/latest`、`/edge/frames` 和 `/ws/game` 讀取骨架、Top 3 動作與事件成功通知
+
+當 frontend 與 backend/socket server 不在同一個 host 時：
+
+- `VITE_API_BASE_URL` 設成 REST API 的位址
+- `VITE_SOCKET_BASE_URL` 設成 Socket.IO/edge 實際位址
